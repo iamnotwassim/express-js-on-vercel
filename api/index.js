@@ -651,7 +651,7 @@ async function exportBook(bookKey, format) {
 
 // Main handler
 export default async function handler(req) {
-  const url = new URL(req.url);
+  const url = new URL(req.url, `https://${req.headers.host}`);
   const path = url.pathname;
 
   try {
