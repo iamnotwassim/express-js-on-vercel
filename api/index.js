@@ -246,6 +246,29 @@ export default async function handler(req, res) {
         return res.status(200).send(md);
       }
 
+      if (path.startsWith('/export/book/')) {
+        const bookKey = path.replace('/export/book/', '');
+        const format = url.searchParams.get('format') || 'md';
+        const book = await safeGet(`book:${bookKey}`);
+        if (!book) return res.status(404).send('Book not found');
+        const ids = await safeGetArray(`book_highlights:${bookKey}`);
+        const highlights = [];
+        for (const id of ids) {
+          const h = await safeGet(`highlight:${id}`);
+          if (h) highlights.push(h);
+        }
+        if (format === 'json') {
+          res.setHeader('Content-Type', 'application/json');
+          res.setHeader('Content-Disposition', `attachment; filename="${book.title}.json"`);
+          return res.status(200).send(JSON.stringify({ book, highlights }, null, 2));
+        }
+        let md = `# ${book.author} - ${book.title}\n\n`;
+        for (const h of highlights) { md += `> ${h.text}\n\n`; }
+        res.setHeader('Content-Type', 'text/markdown');
+        res.setHeader('Content-Disposition', `attachment; filename="${book.title}.md"`);
+        return res.status(200).send(md);
+      }
+
       if (path.startsWith('/book/')) {
         const bookKey = path.replace('/book/', '');
         const book = await safeGet(`book:${bookKey}`);
@@ -257,6 +280,7 @@ export default async function handler(req, res) {
           if (h) highlights.push(h);
         }
         const content = `<h1>${escapeHtml(book.title)}</h1><p style="color:#666">${escapeHtml(book.author)}</p><p>${highlights.length} highlights</p>
+          <div class="export-links" style="margin:20px 0"><a href="/export/book/${bookKey}?format=md">Export Markdown</a><a href="/export/book/${bookKey}?format=json">Export JSON</a></div>
           ${highlights.map(h => `<div class="highlight"><div class="highlight-text">"${escapeHtml(h.text)}"</div></div>`).join('')}`;
         return res.status(200).send(htmlPage(book.title, content));
       }
