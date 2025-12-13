@@ -262,8 +262,20 @@ export default async function handler(req, res) {
           res.setHeader('Content-Disposition', `attachment; filename="${book.title}.json"`);
           return res.status(200).send(JSON.stringify({ book, highlights }, null, 2));
         }
+        // Group highlights by chapter
+        const byChapter = {};
+        for (const h of highlights) {
+          const chapter = h.chapter || 'Uncategorized';
+          if (!byChapter[chapter]) byChapter[chapter] = [];
+          byChapter[chapter].push(h);
+        }
         let md = `# ${book.author} - ${book.title}\n\n`;
-        for (const h of highlights) { md += `> ${h.text}\n\n`; }
+        for (const [chapter, chapterHighlights] of Object.entries(byChapter)) {
+          md += `## ${chapter}\n\n`;
+          chapterHighlights.forEach((h, i) => {
+            md += `### Entry ${i + 1}\n\n${h.text}\n\n`;
+          });
+        }
         res.setHeader('Content-Type', 'text/markdown');
         res.setHeader('Content-Disposition', `attachment; filename="${book.title}.md"`);
         return res.status(200).send(md);
