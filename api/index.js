@@ -28,9 +28,12 @@ function htmlPage(title, content) {
 body{font-family:system-ui,sans-serif;max-width:900px;margin:0 auto;padding:20px;background:#fafafa;color:#333}
 h1{border-bottom:2px solid #ddd;padding-bottom:10px}
 a{color:#0066cc}
-.highlight{background:white;border-left:4px solid #0066cc;padding:15px 20px;margin:15px 0;box-shadow:0 1px 3px rgba(0,0,0,0.1)}
+.highlight{background:white;border-left:4px solid #0066cc;padding:15px 20px;margin:15px 0;box-shadow:0 1px 3px rgba(0,0,0,0.1);position:relative}
 .highlight-text{font-style:italic;font-size:1.1em}
 .highlight-meta{font-size:0.85em;color:#888;margin-top:10px}
+.highlight-actions{position:absolute;top:10px;right:10px}
+.delete-btn{background:#cc0000;color:white;border:none;padding:5px 10px;border-radius:4px;cursor:pointer;font-size:12px}
+.delete-btn:hover{background:#aa0000}
 .book-card{background:white;padding:15px 20px;margin:10px 0;box-shadow:0 1px 3px rgba(0,0,0,0.1);display:flex;justify-content:space-between;align-items:center}
 .book-count{background:#0066cc;color:white;padding:5px 12px;border-radius:20px}
 .nav{background:#333;padding:10px 20px;margin:-20px -20px 20px -20px}
@@ -38,29 +41,40 @@ a{color:#0066cc}
 .stats{display:flex;gap:30px;margin:20px 0}
 .stat{background:white;padding:15px 25px;box-shadow:0 1px 3px rgba(0,0,0,0.1)}
 .stat-number{font-size:2em;font-weight:bold;color:#0066cc}
-.export-links a{margin-right:15px;padding:8px 15px;background:#0066cc;color:white;border-radius:4px;text-decoration:none}
+.export-links a,.action-btn{margin-right:15px;padding:8px 15px;background:#0066cc;color:white;border-radius:4px;text-decoration:none;border:none;cursor:pointer;font-size:14px;display:inline-block}
+.action-btn.danger{background:#cc0000}
+.action-btn.danger:hover{background:#aa0000}
 .search-box{width:100%;padding:12px;font-size:16px;border:1px solid #ddd;border-radius:4px;margin-bottom:20px}
 </style>
+<script>
+function deleteHighlight(id, bookKey) {
+  if (!confirm('Delete this highlight?')) return;
+  fetch('/delete/highlight/' + id + '?book=' + bookKey, { method: 'POST' })
+    .then(r => r.json())
+    .then(d => { if (d.success) location.reload(); else alert('Error: ' + d.error); })
+    .catch(e => alert('Error: ' + e));
+}
+function deleteBook(bookKey) {
+  if (!confirm('Delete this book and ALL its highlights? This cannot be undone.')) return;
+  fetch('/delete/book/' + bookKey, { method: 'POST' })
+    .then(r => r.json())
+    .then(d => { if (d.success) location.href = '/books'; else alert('Error: ' + d.error); })
+    .catch(e => alert('Error: ' + e));
+}
+</script>
 </head><body>
 <nav class="nav"><a href="/">Home</a><a href="/books">Books</a><a href="/search">Search</a><a href="/export">Export</a></nav>
 ${content}
 </body></html>`;
 }
 
-// Helper to safely get from Redis (handles both string and object returns)
 async function safeGet(key) {
   try {
     const val = await redis.get(key);
     if (val === null || val === undefined) return null;
-    // If it's already an object, return it
     if (typeof val === 'object') return val;
-    // If it's a string, try to parse it
     if (typeof val === 'string') {
-      try {
-        return JSON.parse(val);
-      } catch {
-        return val; // Return as-is if not valid JSON
-      }
+      try { return JSON.parse(val); } catch { return val; }
     }
     return val;
   } catch (e) {
@@ -69,11 +83,9 @@ async function safeGet(key) {
   }
 }
 
-// Helper to safely get array from Redis
 async function safeGetArray(key) {
   const val = await safeGet(key);
   if (Array.isArray(val)) return val;
-  if (val === null || val === undefined) return [];
   return [];
 }
 
@@ -95,28 +107,23 @@ export default async function handler(req, res) {
       const highlight = { id, text: text.trim(), title: title.trim(), author: author.trim(), chapter: chapter?.trim(), created_at: new Date().toISOString() };
       const bookKey = normalizeKey(`${author}_${title}`);
       
-      // Store highlight
       await redis.set(`highlight:${id}`, highlight);
       
-      // Add to book's highlight list
       const bookHighlights = await safeGetArray(`book_highlights:${bookKey}`);
       bookHighlights.push(id);
       await redis.set(`book_highlights:${bookKey}`, bookHighlights);
       
-      // Update book metadata
       const book = await safeGet(`book:${bookKey}`) || { title: title.trim(), author: author.trim(), highlight_count: 0 };
       book.highlight_count = (book.highlight_count || 0) + 1;
       book.last_updated = highlight.created_at;
       await redis.set(`book:${bookKey}`, book);
       
-      // Add to books list
       const books = await safeGetArray('books');
       if (!books.includes(bookKey)) { 
         books.push(bookKey); 
         await redis.set('books', books); 
       }
       
-      // Add to all highlights list
       const allHighlights = await safeGetArray('all_highlights');
       allHighlights.unshift(id);
       await redis.set('all_highlights', allHighlights);
@@ -168,6 +175,65 @@ export default async function handler(req, res) {
       }
       
       return res.status(200).json({ success: true, added: addedCount });
+    }
+
+    // POST /delete/highlight/:id
+    if (req.method === 'POST' && path.startsWith('/delete/highlight/')) {
+      const id = path.replace('/delete/highlight/', '');
+      const bookKey = url.searchParams.get('book');
+      
+      // Delete the highlight
+      await redis.del(`highlight:${id}`);
+      
+      // Remove from book's highlight list
+      if (bookKey) {
+        const bookHighlights = await safeGetArray(`book_highlights:${bookKey}`);
+        const filtered = bookHighlights.filter(hid => hid !== id);
+        await redis.set(`book_highlights:${bookKey}`, filtered);
+        
+        // Update book count
+        const book = await safeGet(`book:${bookKey}`);
+        if (book) {
+          book.highlight_count = Math.max(0, (book.highlight_count || 1) - 1);
+          await redis.set(`book:${bookKey}`, book);
+        }
+      }
+      
+      // Remove from all highlights list
+      const allHighlights = await safeGetArray('all_highlights');
+      const filteredAll = allHighlights.filter(hid => hid !== id);
+      await redis.set('all_highlights', filteredAll);
+      
+      return res.status(200).json({ success: true });
+    }
+
+    // POST /delete/book/:key
+    if (req.method === 'POST' && path.startsWith('/delete/book/')) {
+      const bookKey = path.replace('/delete/book/', '');
+      
+      // Get all highlight IDs for this book
+      const bookHighlights = await safeGetArray(`book_highlights:${bookKey}`);
+      
+      // Delete each highlight
+      for (const id of bookHighlights) {
+        await redis.del(`highlight:${id}`);
+      }
+      
+      // Remove highlights from all_highlights list
+      const allHighlights = await safeGetArray('all_highlights');
+      const filteredAll = allHighlights.filter(id => !bookHighlights.includes(id));
+      await redis.set('all_highlights', filteredAll);
+      
+      // Delete book data
+      await redis.del(`book_highlights:${bookKey}`);
+      await redis.del(`book:${bookKey}`);
+      
+      // Remove from books list
+      const books = await safeGetArray('books');
+      const filteredBooks = books.filter(k => k !== bookKey);
+      await redis.set('books', filteredBooks);
+      
+      return res.status(200).json({ success: true });
     }
 
     // GET pages
@@ -262,19 +328,27 @@ export default async function handler(req, res) {
           res.setHeader('Content-Disposition', `attachment; filename="${book.title}.json"`);
           return res.status(200).send(JSON.stringify({ book, highlights }, null, 2));
         }
-        // Group highlights by chapter
-        const byChapter = {};
+        // Group highlights by chapter, preserving order
+        const chapters = [];
+        const chapterMap = {};
         for (const h of highlights) {
-          const chapter = h.chapter || 'Uncategorized';
-          if (!byChapter[chapter]) byChapter[chapter] = [];
-          byChapter[chapter].push(h);
+          const chapter = h.chapter || null;
+          if (!chapterMap[chapter]) {
+            chapterMap[chapter] = [];
+            chapters.push(chapter);
+          }
+          chapterMap[chapter].push(h);
         }
         let md = `# ${book.author} - ${book.title}\n\n`;
-        for (const [chapter, chapterHighlights] of Object.entries(byChapter)) {
-          md += `## ${chapter}\n\n`;
-          chapterHighlights.forEach((h, i) => {
-            md += `### Entry ${i + 1}\n\n${h.text}\n\n`;
-          });
+        let entryNum = 1;
+        for (const chapter of chapters) {
+          if (chapter) {
+            md += `## ${chapter}\n\n`;
+          }
+          for (const h of chapterMap[chapter]) {
+            md += `### Entry ${entryNum}\n\n${h.text}\n\n`;
+            entryNum++;
+          }
         }
         res.setHeader('Content-Type', 'text/markdown');
         res.setHeader('Content-Disposition', `attachment; filename="${book.title}.md"`);
@@ -292,8 +366,16 @@ export default async function handler(req, res) {
           if (h) highlights.push(h);
         }
         const content = `<h1>${escapeHtml(book.title)}</h1><p style="color:#666">${escapeHtml(book.author)}</p><p>${highlights.length} highlights</p>
-          <div class="export-links" style="margin:20px 0"><a href="/export/book/${bookKey}?format=md">Export Markdown</a><a href="/export/book/${bookKey}?format=json">Export JSON</a></div>
-          ${highlights.map(h => `<div class="highlight"><div class="highlight-text">"${escapeHtml(h.text)}"</div></div>`).join('')}`;
+          <div style="margin:20px 0">
+            <a href="/export/book/${bookKey}?format=md" class="action-btn">Export Markdown</a>
+            <a href="/export/book/${bookKey}?format=json" class="action-btn">Export JSON</a>
+            <button onclick="deleteBook('${bookKey}')" class="action-btn danger">Delete Book</button>
+          </div>
+          ${highlights.map(h => `<div class="highlight">
+            <div class="highlight-actions"><button class="delete-btn" onclick="deleteHighlight('${h.id}', '${bookKey}')">Delete</button></div>
+            <div class="highlight-text">"${escapeHtml(h.text)}"</div>
+            ${h.chapter ? `<div class="highlight-meta">${escapeHtml(h.chapter)}</div>` : ''}
+          </div>`).join('')}`;
         return res.status(200).send(htmlPage(book.title, content));
       }
     }
