@@ -328,28 +328,10 @@ export default async function handler(req, res) {
           res.setHeader('Content-Disposition', `attachment; filename="${book.title}.json"`);
           return res.status(200).send(JSON.stringify({ book, highlights }, null, 2));
         }
-        // Group highlights by chapter, preserving order
-        const chapters = [];
-        const chapterMap = {};
-        for (const h of highlights) {
-          const chapter = h.chapter || null;
-          if (!chapterMap[chapter]) {
-            chapterMap[chapter] = [];
-            chapters.push(chapter);
-          }
-          chapterMap[chapter].push(h);
-        }
         let md = `# ${book.author} - ${book.title}\n\n`;
-        let entryNum = 1;
-        for (const chapter of chapters) {
-          if (chapter) {
-            md += `## ${chapter}\n\n`;
-          }
-          for (const h of chapterMap[chapter]) {
-            md += `### Entry ${entryNum}\n\n${h.text}\n\n`;
-            entryNum++;
-          }
-        }
+        highlights.forEach((h, i) => {
+          md += `## Entry ${i + 1}\n\n${h.text}\n\n`;
+        });
         res.setHeader('Content-Type', 'text/markdown');
         res.setHeader('Content-Disposition', `attachment; filename="${book.title}.md"`);
         return res.status(200).send(md);
