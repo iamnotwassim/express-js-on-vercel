@@ -1,4 +1,6 @@
-import { kv } from '@vercel/kv';
+import { Redis } from '@upstash/redis';
+
+const kv = Redis.fromEnv();
 
 // Set your secret code as environment variable SECRET_CODE in Vercel dashboard
 const SECRET_CODE = process.env.SECRET_CODE || 'CHANGE_ME';
