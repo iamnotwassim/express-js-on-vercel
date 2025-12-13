@@ -61,9 +61,16 @@ function deleteBook(bookKey) {
     .then(d => { if (d.success) location.href = '/books'; else alert('Error: ' + d.error); })
     .catch(e => alert('Error: ' + e));
 }
+function deleteMarkedBook(bookKey) {
+  if (!confirm('Delete this marked text export?')) return;
+  fetch('/delete/marked/' + bookKey, { method: 'POST' })
+    .then(r => r.json())
+    .then(d => { if (d.success) location.href = '/marked'; else alert('Error: ' + d.error); })
+    .catch(e => alert('Error: ' + e));
+}
 </script>
 </head><body>
-<nav class="nav"><a href="/">Home</a><a href="/books">Books</a><a href="/search">Search</a><a href="/export">Export</a></nav>
+<nav class="nav"><a href="/">Home</a><a href="/books">Books</a><a href="/marked">Marked</a><a href="/search">Search</a><a href="/export">Export</a></nav>
 ${content}
 </body></html>`;
 }
@@ -129,6 +136,39 @@ export default async function handler(req, res) {
       await redis.set('all_highlights', allHighlights);
       
       return res.status(200).json({ success: true, id });
+    }
+
+    // POST /upload_book - Upload full marked text export
+    if (req.method === 'POST' && path === '/upload_book') {
+      const { code, title, author, content } = req.body;
+      if (!code || code.toUpperCase() !== SECRET_CODE.toUpperCase()) {
+        return res.status(403).json({ error: 'Invalid code' });
+      }
+      if (!title || !content) {
+        return res.status(400).json({ error: 'Missing title or content' });
+      }
+      
+      const bookKey = normalizeKey(`${author || 'Unknown'}_${title}`);
+      const id = generateId();
+      
+      const markedBook = {
+        id,
+        title: title.trim(),
+        author: (author || 'Unknown').trim(),
+        content: content,
+        created_at: new Date().toISOString(),
+      };
+      
+      await redis.set(`marked_book:${bookKey}`, markedBook);
+      
+      // Track in list of marked books
+      const markedBooks = await safeGetArray('marked_books');
+      if (!markedBooks.includes(bookKey)) {
+        markedBooks.push(bookKey);
+        await redis.set('marked_books', markedBooks);
+      }
+      
+      return res.status(200).json({ success: true, id, bookKey });
     }
 
     // POST /bulk_create
@@ -203,6 +243,19 @@ export default async function handler(req, res) {
       const allHighlights = await safeGetArray('all_highlights');
       const filteredAll = allHighlights.filter(hid => hid !== id);
       await redis.set('all_highlights', filteredAll);
+      
+      return res.status(200).json({ success: true });
+    }
+
+    // POST /delete/marked/:key
+    if (req.method === 'POST' && path.startsWith('/delete/marked/')) {
+      const bookKey = path.replace('/delete/marked/', '');
+      
+      await redis.del(`marked_book:${bookKey}`);
+      
+      const markedBooks = await safeGetArray('marked_books');
+      const filtered = markedBooks.filter(k => k !== bookKey);
+      await redis.set('marked_books', filtered);
       
       return res.status(200).json({ success: true });
     }
@@ -290,6 +343,49 @@ export default async function handler(req, res) {
       if (path === '/export') {
         const content = `<h1>📤 Export</h1><h2>All Highlights</h2><div class="export-links"><a href="/export/all?format=md">Markdown</a><a href="/export/all?format=json">JSON</a></div>`;
         return res.status(200).send(htmlPage('Export', content));
+      }
+
+      if (path === '/marked') {
+        const markedBookKeys = await safeGetArray('marked_books');
+        const books = [];
+        for (const key of markedBookKeys) {
+          const b = await safeGet(`marked_book:${key}`);
+          if (b) books.push({ ...b, key });
+        }
+        const content = `<h1>📝 Marked Text Exports (${books.length})</h1>
+          ${books.length === 0 ? '<p>No marked text exports yet. Send from KOReader using the Marked Text Export plugin.</p>' : ''}
+          ${books.map(b => `<div class="book-card">
+            <div><h3 style="margin:0">${escapeHtml(b.title)}</h3><p style="margin:0;color:#666">${escapeHtml(b.author)}</p></div>
+            <div>
+              <a href="/marked/${b.key}" class="action-btn" style="margin-right:5px">View</a>
+              <a href="/marked/${b.key}/download" class="action-btn">Download</a>
+              <button onclick="deleteMarkedBook('${b.key}')" class="action-btn danger" style="margin-left:5px">Delete</button>
+            </div>
+          </div>`).join('')}`;
+        return res.status(200).send(htmlPage('Marked Text Exports', content));
+      }
+
+      if (path.startsWith('/marked/') && path.endsWith('/download')) {
+        const bookKey = path.replace('/marked/', '').replace('/download', '');
+        const book = await safeGet(`marked_book:${bookKey}`);
+        if (!book) return res.status(404).send('Not found');
+        res.setHeader('Content-Type', 'text/markdown');
+        res.setHeader('Content-Disposition', `attachment; filename="${book.title}.md"`);
+        return res.status(200).send(book.content);
+      }
+
+      if (path.startsWith('/marked/')) {
+        const bookKey = path.replace('/marked/', '');
+        const book = await safeGet(`marked_book:${bookKey}`);
+        if (!book) return res.status(404).send('Not found');
+        const content = `<h1>${escapeHtml(book.title)}</h1>
+          <p style="color:#666">${escapeHtml(book.author)}</p>
+          <div style="margin:20px 0">
+            <a href="/marked/${bookKey}/download" class="action-btn">Download Markdown</a>
+            <button onclick="deleteMarkedBook('${bookKey}')" class="action-btn danger">Delete</button>
+          </div>
+          <div style="background:white;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);white-space:pre-wrap;font-family:Georgia,serif;line-height:1.8">${escapeHtml(book.content)}</div>`;
+        return res.status(200).send(htmlPage(book.title, content));
       }
 
       if (path === '/export/all') {
