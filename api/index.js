@@ -1,6 +1,9 @@
 import { Redis } from '@upstash/redis';
 
-const kv = Redis.fromEnv();
+const kv = new Redis({
+  url: process.env.KV_REST_API_URL,
+  token: process.env.KV_REST_API_TOKEN,
+});
 
 // Set your secret code as environment variable SECRET_CODE in Vercel dashboard
 const SECRET_CODE = process.env.SECRET_CODE || 'CHANGE_ME';
@@ -651,7 +654,7 @@ async function exportBook(bookKey, format) {
 
 // Main handler
 export default async function handler(req) {
-  const url = new URL(req.url, `https://${req.headers.host}`);
+  const url = new URL(req.url, 'https://example.com');
   const path = url.pathname;
 
   try {
