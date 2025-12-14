@@ -365,19 +365,19 @@ export default async function handler(req, res) {
         return res.status(200).send(htmlPage('Marked Text Exports', content));
       }
 
-    if (path.startsWith('/marked/') && path.endsWith('/download')) {
-  const bookKey = path.replace('/marked/', '').replace('/download', '');
-const book = await safeGet(`marked_book:${bookKey}`);
-  if (!book) return res.status(404).send('Not found');
-  const safeFilename = (book.title || 'marked_export').replace(/[^a-zA-Z0-9_\- ]/g, '').trim() || 'marked_export';
-  res.setHeader('Content-Type', 'text/markdown');
-  res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}.md"`);
-  return res.status(200).send(book.content);
-}
+      if (path.startsWith('/marked/') && path.endsWith('/download')) {
+        const bookKey = path.replace('/marked/', '').replace('/download', '');
+        const book = await safeGet(`marked_book:${bookKey}`);
+        if (!book) return res.status(404).send('Not found');
+        const safeFilename = (book.title || 'marked_export').replace(/[^a-zA-Z0-9_\- ]/g, '').trim() || 'marked_export';
+        res.setHeader('Content-Type', 'text/markdown');
+        res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}.md"`);
+        return res.status(200).send(book.content);
+      }
 
       if (path.startsWith('/marked/')) {
         const bookKey = path.replace('/marked/', '');
-const book = await safeGet(`marked_book:${bookKey}`);
+        const book = await safeGet(`marked_book:${bookKey}`);
         if (!book) return res.status(404).send('Not found');
         const content = `<h1>${escapeHtml(book.title)}</h1>
           <p style="color:#666">${escapeHtml(book.author)}</p>
@@ -422,17 +422,19 @@ const book = await safeGet(`marked_book:${bookKey}`);
         }
         if (format === 'json') {
           res.setHeader('Content-Type', 'application/json');
-          res.setHeader('Content-Disposition', `attachment; filename="${book.title}.json"`);
+          const safeFilenameJson = (book.title || 'export').replace(/[^a-zA-Z0-9_\- ]/g, '').trim() || 'export';
+          res.setHeader('Content-Disposition', `attachment; filename="${safeFilenameJson}.json"`);
           return res.status(200).send(JSON.stringify({ book, highlights }, null, 2));
         }
-   let md = `# ${book.author} - ${book.title}\n\n`;
-highlights.forEach((h, i) => {
-  md += `## Entry ${i + 1}\n\n${h.text}\n\n`;
-});
-const safeFilename = (book.title || 'export').replace(/[^a-zA-Z0-9_\- ]/g, '').trim() || 'export';
-res.setHeader('Content-Type', 'text/markdown');
-res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}.md"`);
-return res.status(200).send(md);
+        let md = `# ${book.author} - ${book.title}\n\n`;
+        highlights.forEach((h, i) => {
+          md += `## Entry ${i + 1}\n\n${h.text}\n\n`;
+        });
+        const safeFilename = (book.title || 'export').replace(/[^a-zA-Z0-9_\- ]/g, '').trim() || 'export';
+        res.setHeader('Content-Type', 'text/markdown');
+        res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}.md"`);
+        return res.status(200).send(md);
+      }
 
       if (path.startsWith('/book/')) {
         const bookKey = path.replace('/book/', '');
