@@ -367,7 +367,7 @@ export default async function handler(req, res) {
 
     if (path.startsWith('/marked/') && path.endsWith('/download')) {
   const bookKey = path.replace('/marked/', '').replace('/download', '');
-  const book = await safeGet(`marked_book:${bookKey}`);
+const book = await safeGet(`marked_book:${bookKey}`);
   if (!book) return res.status(404).send('Not found');
   const safeFilename = (book.title || 'marked_export').replace(/[^a-zA-Z0-9_\- ]/g, '').trim() || 'marked_export';
   res.setHeader('Content-Type', 'text/markdown');
@@ -377,7 +377,7 @@ export default async function handler(req, res) {
 
       if (path.startsWith('/marked/')) {
         const bookKey = path.replace('/marked/', '');
-        const book = await safeGet(`marked_book:${bookKey}`);
+const book = await safeGet(`marked_book:${bookKey}`);
         if (!book) return res.status(404).send('Not found');
         const content = `<h1>${escapeHtml(book.title)}</h1>
           <p style="color:#666">${escapeHtml(book.author)}</p>
