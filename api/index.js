@@ -217,6 +217,53 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, added: addedCount });
     }
 
+    // POST /coldturkey/trigger - Queue a block command
+    if (req.method === 'POST' && path === '/coldturkey/trigger') {
+      const { code, block, minutes } = req.body;
+      
+      if (!code || code.toUpperCase() !== SECRET_CODE.toUpperCase()) {
+        return res.status(401).json({ error: 'Invalid code' });
+      }
+      
+      const allowedBlocks = ['AI', 'DGD', 'Jobs', 'reddit', 'The whole internet'];
+      if (!allowedBlocks.includes(block)) {
+        return res.status(400).json({ error: 'Invalid block name' });
+      }
+      
+      const validMinutes = [30, 60, 120, 240, 480, 720, 1440];
+      if (!validMinutes.includes(parseInt(minutes))) {
+        return res.status(400).json({ error: 'Invalid duration' });
+      }
+      
+      await redis.set('coldturkey:pending', JSON.stringify({
+        block,
+        minutes: parseInt(minutes),
+        timestamp: Date.now()
+      }));
+      
+      await redis.expire('coldturkey:pending', 60);
+      
+      return res.status(200).json({ success: true, message: `${block} queued for ${minutes} min` });
+    }
+
+    // GET /coldturkey/check - PC polls this for pending commands
+    if (req.method === 'GET' && path === '/coldturkey/check') {
+      const code = url.searchParams.get('code');
+      
+      if (!code || code.toUpperCase() !== SECRET_CODE.toUpperCase()) {
+        return res.status(401).json({ error: 'Invalid code' });
+      }
+      
+      const pending = await redis.get('coldturkey:pending');
+      if (pending) {
+        await redis.del('coldturkey:pending');
+        const data = typeof pending === 'string' ? JSON.parse(pending) : pending;
+        return res.status(200).json(data);
+      } else {
+        return res.status(200).json(null);
+      }
+    }
+
     // POST /delete/highlight/:id
     if (req.method === 'POST' && path.startsWith('/delete/highlight/')) {
       const id = path.replace('/delete/highlight/', '');
@@ -291,6 +338,191 @@ export default async function handler(req, res) {
 
     // GET pages
     if (req.method === 'GET') {
+      // GET /coldturkey - Control page
+      if (path === '/coldturkey') {
+        const html = `<!DOCTYPE html>
+<html>
+<head>
+  <title>Cold Turkey Remote</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 400px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #1a1a2e;
+      color: #eee;
+      min-height: 100vh;
+    }
+    h1 {
+      text-align: center;
+      color: #00d9ff;
+      margin-bottom: 30px;
+    }
+    .auth-section {
+      margin-bottom: 30px;
+    }
+    input[type="password"] {
+      width: 100%;
+      padding: 12px;
+      font-size: 16px;
+      border: 2px solid #333;
+      border-radius: 8px;
+      background: #0f0f1a;
+      color: #fff;
+    }
+    .duration-section {
+      margin-bottom: 20px;
+    }
+    select {
+      width: 100%;
+      padding: 12px;
+      font-size: 16px;
+      border: 2px solid #333;
+      border-radius: 8px;
+      background: #0f0f1a;
+      color: #fff;
+    }
+    .blocks {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    button {
+      padding: 16px;
+      font-size: 18px;
+      font-weight: bold;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: transform 0.1s, opacity 0.1s;
+    }
+    button:active {
+      transform: scale(0.98);
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .btn-ai { background: #e74c3c; color: white; }
+    .btn-dgd { background: #9b59b6; color: white; }
+    .btn-jobs { background: #3498db; color: white; }
+    .btn-reddit { background: #ff4500; color: white; }
+    .btn-nuclear { background: #2c3e50; color: white; border: 3px solid #e74c3c; }
+    .status {
+      margin-top: 20px;
+      padding: 12px;
+      border-radius: 8px;
+      text-align: center;
+      display: none;
+    }
+    .status.success { background: #27ae60; display: block; }
+    .status.error { background: #c0392b; display: block; }
+    .status.loading { background: #2980b9; display: block; }
+    label {
+      display: block;
+      margin-bottom: 8px;
+      color: #888;
+    }
+  </style>
+</head>
+<body>
+  <h1>🦃 Cold Turkey</h1>
+  
+  <div class="auth-section">
+    <label>Verification Code</label>
+    <input type="password" id="code" placeholder="Enter code">
+  </div>
+  
+  <div class="duration-section">
+    <label>Duration</label>
+    <select id="duration">
+      <option value="30">30 minutes</option>
+      <option value="60">1 hour</option>
+      <option value="120" selected>2 hours</option>
+      <option value="240">4 hours</option>
+      <option value="480">8 hours</option>
+      <option value="720">12 hours</option>
+      <option value="1440">24 hours</option>
+    </select>
+  </div>
+  
+  <div class="blocks">
+    <button class="btn-ai" onclick="trigger('AI')">Block AI</button>
+    <button class="btn-dgd" onclick="trigger('DGD')">Block DGD</button>
+    <button class="btn-jobs" onclick="trigger('Jobs')">Block Jobs</button>
+    <button class="btn-reddit" onclick="trigger('reddit')">Block Reddit</button>
+    <button class="btn-nuclear" onclick="trigger('The whole internet')">🚨 BLOCK EVERYTHING 🚨</button>
+  </div>
+  
+  <div id="status" class="status"></div>
+  
+  <script>
+    const codeInput = document.getElementById('code');
+    codeInput.value = localStorage.getItem('ct_code') || '';
+    codeInput.addEventListener('input', () => {
+      localStorage.setItem('ct_code', codeInput.value);
+    });
+    
+    const durationSelect = document.getElementById('duration');
+    durationSelect.value = localStorage.getItem('ct_duration') || '120';
+    durationSelect.addEventListener('change', () => {
+      localStorage.setItem('ct_duration', durationSelect.value);
+    });
+    
+    async function trigger(block) {
+      const code = document.getElementById('code').value;
+      const minutes = document.getElementById('duration').value;
+      const status = document.getElementById('status');
+      
+      if (!code) {
+        status.className = 'status error';
+        status.textContent = 'Enter verification code';
+        return;
+      }
+      
+      if (block === 'The whole internet') {
+        if (!confirm('Block THE ENTIRE INTERNET for ' + (parseInt(minutes) >= 60 ? (minutes/60) + ' hours' : minutes + ' minutes') + '?')) {
+          return;
+        }
+      }
+      
+      status.className = 'status loading';
+      status.textContent = 'Sending...';
+      
+      try {
+        const response = await fetch('/coldturkey/trigger', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code, block, minutes: parseInt(minutes) })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+          status.className = 'status success';
+          status.textContent = '✓ ' + data.message;
+        } else {
+          status.className = 'status error';
+          status.textContent = data.error || 'Failed';
+        }
+      } catch (e) {
+        status.className = 'status error';
+        status.textContent = 'Connection error';
+      }
+      
+      setTimeout(() => {
+        status.className = 'status';
+      }, 3000);
+    }
+  </script>
+</body>
+</html>`;
+        return res.status(200).send(html);
+      }
+
       if (path === '/' || path === '') {
         const allIds = await safeGetArray('all_highlights');
         const bookKeys = await safeGetArray('books');
