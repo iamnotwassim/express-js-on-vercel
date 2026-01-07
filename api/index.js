@@ -68,9 +68,16 @@ function deleteMarkedBook(bookKey) {
     .then(d => { if (d.success) location.href = '/marked'; else alert('Error: ' + d.error); })
     .catch(e => alert('Error: ' + e));
 }
+function deleteLobExcerpt(id) {
+  if (!confirm('Delete this excerpt?')) return;
+  fetch('/lob/delete/' + id, { method: 'POST' })
+    .then(r => r.json())
+    .then(d => { if (d.success) location.reload(); else alert('Error: ' + d.error); })
+    .catch(e => alert('Error: ' + e));
+}
 </script>
 </head><body>
-<nav class="nav"><a href="/">Home</a><a href="/books">Books</a><a href="/marked">Marked</a><a href="/search">Search</a><a href="/export">Export</a></nav>
+<nav class="nav"><a href="/">Home</a><a href="/books">Books</a><a href="/marked">Marked</a><a href="/lob">LoB</a><a href="/search">Search</a><a href="/export">Export</a></nav>
 ${content}
 </body></html>`;
 }
@@ -171,6 +178,45 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, id, bookKey });
     }
 
+    // POST /lob/upload - Receive excerpts from KOReader LoB plugin
+    if (req.method === 'POST' && path === '/lob/upload') {
+      const { code, excerpts } = req.body;
+      
+      if (!code || code.toUpperCase() !== SECRET_CODE.toUpperCase()) {
+        return res.status(401).json({ error: 'Invalid code' });
+      }
+      
+      if (!excerpts || !Array.isArray(excerpts) || excerpts.length === 0) {
+        return res.status(400).json({ error: 'No excerpts provided' });
+      }
+      
+      // Get existing excerpts
+      let existing = await safeGetArray('lob:excerpts');
+      
+      // Add new excerpts with unique IDs
+      const timestamp = Date.now();
+      const newExcerpts = excerpts.map((e, i) => ({
+        id: `${timestamp}-${i}`,
+        text: e.text,
+        book_title: e.book_title || 'Unknown',
+        author: e.author || 'Unknown',
+        page: e.page || '',
+        topic: e.topic || 'Uncategorized',
+        type: e.type || 'Untyped',
+        date: e.date || new Date().toISOString(),
+        uploaded: new Date().toISOString()
+      }));
+      
+      const allExcerpts = [...existing, ...newExcerpts];
+      await redis.set('lob:excerpts', allExcerpts);
+      
+      return res.status(200).json({ 
+        success: true, 
+        added: newExcerpts.length,
+        total: allExcerpts.length 
+      });
+    }
+
     // POST /bulk_create
     if (req.method === 'POST' && path === '/bulk_create') {
       const { code, title, author, bookmarks } = req.body;
@@ -262,6 +308,21 @@ export default async function handler(req, res) {
       } else {
         return res.status(200).json(null);
       }
+    }
+
+    // POST /lob/delete/:id - Delete single excerpt
+    if (req.method === 'POST' && path.startsWith('/lob/delete/')) {
+      const id = path.replace('/lob/delete/', '');
+      
+      let excerpts = await safeGetArray('lob:excerpts');
+      const filtered = excerpts.filter(e => e.id !== id);
+      
+      if (filtered.length === excerpts.length) {
+        return res.status(404).json({ error: 'Excerpt not found' });
+      }
+      
+      await redis.set('lob:excerpts', filtered);
+      return res.status(200).json({ success: true });
     }
 
     // POST /delete/highlight/:id
@@ -523,17 +584,120 @@ export default async function handler(req, res) {
         return res.status(200).send(html);
       }
 
+      // GET /lob - Library of Babel main page
+      if (path === '/lob') {
+        let excerpts = await safeGetArray('lob:excerpts');
+        
+        // Get unique topics and types for filtering
+        const topics = [...new Set(excerpts.map(e => e.topic))].sort();
+        const types = [...new Set(excerpts.map(e => e.type))].sort();
+        
+        // Check for filter params
+        const filterTopic = url.searchParams.get('topic');
+        const filterType = url.searchParams.get('type');
+        
+        let filtered = excerpts;
+        if (filterTopic) {
+          filtered = filtered.filter(e => e.topic === filterTopic);
+        }
+        if (filterType) {
+          filtered = filtered.filter(e => e.type === filterType);
+        }
+        
+        // Sort by date (newest first)
+        filtered.sort((a, b) => new Date(b.date || b.uploaded) - new Date(a.date || a.uploaded));
+        
+        const filtersHtml = `
+          <div style="display:flex;gap:15px;margin-bottom:25px;flex-wrap:wrap;">
+            <select onchange="if(this.value) window.location.href='/lob?topic='+encodeURIComponent(this.value)${filterType ? "+'&type=${filterType}'" : ''}; else window.location.href='/lob${filterType ? '?type='+filterType : ''}';" style="padding:8px 12px;font-size:14px;border:1px solid #ccc;border-radius:4px;">
+              <option value="">All Topics</option>
+              ${topics.map(t => `<option value="${escapeHtml(t)}" ${filterTopic === t ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('')}
+            </select>
+            <select onchange="if(this.value) window.location.href='/lob?type='+encodeURIComponent(this.value)${filterTopic ? "+'&topic=${filterTopic}'" : ''}; else window.location.href='/lob${filterTopic ? '?topic='+filterTopic : ''}';" style="padding:8px 12px;font-size:14px;border:1px solid #ccc;border-radius:4px;">
+              <option value="">All Types</option>
+              ${types.map(t => `<option value="${escapeHtml(t)}" ${filterType === t ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('')}
+            </select>
+            ${(filterTopic || filterType) ? '<a href="/lob" style="padding:8px 12px;background:#eee;text-decoration:none;color:#333;border-radius:4px;">Clear filters</a>' : ''}
+          </div>`;
+        
+        const excerptCards = filtered.map(e => `
+          <div class="highlight" style="border-left-color:#1565c0;">
+            <div class="highlight-actions">
+              <button class="delete-btn" onclick="deleteLobExcerpt('${e.id}')">Delete</button>
+            </div>
+            <div class="highlight-text">"${escapeHtml(e.text)}"</div>
+            <div class="highlight-meta">
+              <span style="display:inline-block;padding:2px 8px;border-radius:3px;font-size:0.8em;margin-right:5px;background:#e3f2fd;color:#1565c0;">${escapeHtml(e.topic)}</span>
+              <span style="display:inline-block;padding:2px 8px;border-radius:3px;font-size:0.8em;margin-right:10px;background:#fce4ec;color:#c2185b;">${escapeHtml(e.type)}</span>
+              <strong>${escapeHtml(e.book_title)}</strong>
+              ${e.author ? ` by ${escapeHtml(e.author)}` : ''}
+              ${e.page ? ` (p. ${escapeHtml(e.page)})` : ''}
+            </div>
+          </div>
+        `).join('');
+        
+        const content = `
+          <h1>📚 Library of Babel</h1>
+          <p style="color:#666;">${excerpts.length} excerpts${filtered.length !== excerpts.length ? ` (showing ${filtered.length})` : ''}</p>
+          ${filtersHtml}
+          ${excerpts.length > 0 ? '<div style="margin-bottom:20px;"><a href="/lob/download" class="action-btn">Download as Markdown</a></div>' : ''}
+          ${filtered.length === 0 ? '<p style="text-align:center;padding:40px;color:#999;">No excerpts yet. Send some from KOReader!</p>' : excerptCards}
+        `;
+        
+        return res.status(200).send(htmlPage('Library of Babel', content));
+      }
+
+      // GET /lob/download - Download all excerpts as markdown
+      if (path === '/lob/download') {
+        let excerpts = await safeGetArray('lob:excerpts');
+        
+        if (excerpts.length === 0) {
+          return res.status(404).send('No excerpts to download');
+        }
+        
+        // Group by topic
+        const byTopic = {};
+        for (const e of excerpts) {
+          if (!byTopic[e.topic]) byTopic[e.topic] = [];
+          byTopic[e.topic].push(e);
+        }
+        
+        // Build markdown
+        let md = `# Library of Babel Export\n\nExported: ${new Date().toLocaleDateString()}\nTotal excerpts: ${excerpts.length}\n\n---\n\n`;
+        
+        for (const topic of Object.keys(byTopic).sort()) {
+          md += `## ${topic}\n\n`;
+          for (const e of byTopic[topic]) {
+            md += `> "${e.text}"\n\n`;
+            md += `**${e.book_title}**`;
+            if (e.author) md += ` by ${e.author}`;
+            if (e.page) md += ` (p. ${e.page})`;
+            md += `\n`;
+            md += `*Type: ${e.type}*\n\n`;
+            md += `---\n\n`;
+          }
+        }
+        
+        res.setHeader('Content-Type', 'text/markdown');
+        res.setHeader('Content-Disposition', 'attachment; filename="lob_export.md"');
+        return res.status(200).send(md);
+      }
+
       if (path === '/' || path === '') {
         const allIds = await safeGetArray('all_highlights');
         const bookKeys = await safeGetArray('books');
+        const lobExcerpts = await safeGetArray('lob:excerpts');
         const recent = [];
         for (const id of allIds.slice(0, 10)) {
           const h = await safeGet(`highlight:${id}`);
           if (h) recent.push(h);
         }
         const content = `<h1>📚 My Highlights</h1>
-          <div class="stats"><div class="stat"><div class="stat-number">${allIds.length}</div><div>Highlights</div></div>
-          <div class="stat"><div class="stat-number">${bookKeys.length}</div><div>Books</div></div></div>
+          <div class="stats">
+            <div class="stat"><div class="stat-number">${allIds.length}</div><div>Highlights</div></div>
+            <div class="stat"><div class="stat-number">${bookKeys.length}</div><div>Books</div></div>
+            <div class="stat"><div class="stat-number">${lobExcerpts.length}</div><div>LoB Excerpts</div></div>
+          </div>
           <h2>Recent</h2>
           ${recent.map(h => `<div class="highlight"><div class="highlight-text">"${escapeHtml(h.text)}"</div>
           <div class="highlight-meta"><strong>${escapeHtml(h.author)}</strong> — ${escapeHtml(h.title)}</div></div>`).join('')}`;
