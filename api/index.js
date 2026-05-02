@@ -986,10 +986,23 @@ export default async function handler(req, res) {
             const file = input.files[0];
             const reader = new FileReader();
             reader.onload = function(e) {
-              const dataUrl = e.target.result;
-              document.getElementById('preview-img').src = dataUrl;
-              document.getElementById('preview-container').style.display = 'block';
-              runOcr(dataUrl);
+              const img = new Image();
+              img.onload = function() {
+                const maxSize = 1600;
+                let w = img.width, h = img.height;
+                if (w > maxSize || h > maxSize) {
+                  if (w > h) { h = Math.round(h * maxSize / w); w = maxSize; }
+                  else { w = Math.round(w * maxSize / h); h = maxSize; }
+                }
+                const canvas = document.createElement('canvas');
+                canvas.width = w; canvas.height = h;
+                canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                document.getElementById('preview-img').src = dataUrl;
+                document.getElementById('preview-container').style.display = 'block';
+                runOcr(dataUrl);
+              };
+              img.src = e.target.result;
             };
             reader.readAsDataURL(file);
           }
