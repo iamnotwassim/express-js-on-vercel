@@ -960,8 +960,8 @@ export default async function handler(req, res) {
             if (!title || !author) { alert('Please enter both title and author.'); return; }
             if (!c) { alert('Please enter your verification code.'); return; }
             localStorage.setItem('cp_code', c);
-            sessionStorage.setItem('cp_title', title);
-            sessionStorage.setItem('cp_author', author);
+            localStorage.setItem('cp_title', title);
+            localStorage.setItem('cp_author', author);
             showSession(title, author);
           }
 
@@ -973,8 +973,8 @@ export default async function handler(req, res) {
           }
 
           function changeBook() {
-            sessionStorage.removeItem('cp_title');
-            sessionStorage.removeItem('cp_author');
+            localStorage.removeItem('cp_title');
+            localStorage.removeItem('cp_author');
             document.getElementById('session-form').style.display = 'block';
             document.getElementById('session-active').style.display = 'none';
             document.getElementById('scan-section').style.display = 'none';
@@ -1039,8 +1039,8 @@ export default async function handler(req, res) {
           async function savePassage() {
             const text = document.getElementById('extracted-text').value.trim();
             const page = document.getElementById('page-number').value.trim();
-            const title = sessionStorage.getItem('cp_title');
-            const author = sessionStorage.getItem('cp_author');
+            const title = localStorage.getItem('cp_title');
+            const author = localStorage.getItem('cp_author');
             const c = localStorage.getItem('cp_code');
             if (!text) { alert('Text is empty.'); return; }
 
@@ -1080,8 +1080,8 @@ export default async function handler(req, res) {
           }
 
           // Restore session if already active
-          const savedTitle = sessionStorage.getItem('cp_title');
-          const savedAuthor = sessionStorage.getItem('cp_author');
+          const savedTitle = localStorage.getItem('cp_title');
+          const savedAuthor = localStorage.getItem('cp_author');
           if (savedTitle && savedAuthor) showSession(savedTitle, savedAuthor);
         </script>
       `;
