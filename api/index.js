@@ -894,6 +894,13 @@ export default async function handler(req, res) {
 
     // GET /commonplace - Scan physical book passages
     if (req.method === 'GET' && path === '/commonplace') {
+      const bookKeys = await safeGetArray('books');
+      const bookList = [];
+      for (const key of bookKeys) {
+        const b = await safeGet(`book:${key}`);
+        if (b) bookList.push({ title: b.title, author: b.author });
+      }
+      const booksJson = JSON.stringify(bookList);
       const content = `
         <h1>Commonplace Book</h1>
         <div id="session-setup" style="background:white;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:20px;">
@@ -904,12 +911,20 @@ export default async function handler(req, res) {
           </div>
           <div id="session-form">
             <div style="margin-bottom:12px;">
-              <label style="display:block;margin-bottom:4px;color:#555;font-size:0.9em;">Book Title</label>
-              <input id="book-title" type="text" placeholder="e.g. Middlemarch" style="width:100%;padding:10px;font-size:16px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;">
+              <label style="display:block;margin-bottom:4px;color:#555;font-size:0.9em;">Select a Book</label>
+              <select id="book-select" onchange="onBookSelect()" style="width:100%;padding:10px;font-size:16px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;background:white;">
+                <option value="">— New book —</option>
+              </select>
             </div>
-            <div style="margin-bottom:12px;">
-              <label style="display:block;margin-bottom:4px;color:#555;font-size:0.9em;">Author</label>
-              <input id="book-author" type="text" placeholder="e.g. George Eliot" style="width:100%;padding:10px;font-size:16px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;">
+            <div id="new-book-fields">
+              <div style="margin-bottom:12px;">
+                <label style="display:block;margin-bottom:4px;color:#555;font-size:0.9em;">Book Title</label>
+                <input id="book-title" type="text" placeholder="e.g. Middlemarch" style="width:100%;padding:10px;font-size:16px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;">
+              </div>
+              <div style="margin-bottom:12px;">
+                <label style="display:block;margin-bottom:4px;color:#555;font-size:0.9em;">Author</label>
+                <input id="book-author" type="text" placeholder="e.g. George Eliot" style="width:100%;padding:10px;font-size:16px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;">
+              </div>
             </div>
             <div style="margin-bottom:12px;">
               <label style="display:block;margin-bottom:4px;color:#555;font-size:0.9em;">Verification Code</label>
@@ -952,6 +967,28 @@ export default async function handler(req, res) {
         <script>
           const code = localStorage.getItem('cp_code') || '';
           document.getElementById('secret-code').value = code;
+
+          const existingBooks = ${booksJson};
+          const selectEl = document.getElementById('book-select');
+          existingBooks.forEach((b, i) => {
+            const opt = document.createElement('option');
+            opt.value = i;
+            opt.textContent = b.title + ' — ' + b.author;
+            selectEl.appendChild(opt);
+          });
+
+          function onBookSelect() {
+            const val = selectEl.value;
+            if (val === '') {
+              document.getElementById('new-book-fields').style.display = 'block';
+              document.getElementById('book-title').value = '';
+              document.getElementById('book-author').value = '';
+            } else {
+              document.getElementById('new-book-fields').style.display = 'none';
+              document.getElementById('book-title').value = existingBooks[val].title;
+              document.getElementById('book-author').value = existingBooks[val].author;
+            }
+          }
 
           function startSession() {
             const title = document.getElementById('book-title').value.trim();
