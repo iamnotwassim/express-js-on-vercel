@@ -1,4 +1,5 @@
 import { Redis } from '@upstash/redis';
+import Anthropic from '@anthropic-ai/sdk';
 
 const redis = new Redis({
   url: process.env.KV_REST_API_URL,
@@ -77,7 +78,7 @@ function deleteLobExcerpt(id) {
 }
 </script>
 </head><body>
-<nav class="nav"><a href="/">Home</a><a href="/books">Books</a><a href="/marked">Marked</a><a href="/lob">LoB</a><a href="/search">Search</a><a href="/export">Export</a></nav>
+<nav class="nav"><a href="/">Home</a><a href="/books">Books</a><a href="/commonplace">Commonplace</a><a href="/marked">Marked</a><a href="/lob">LoB</a><a href="/search">Search</a><a href="/export">Export</a></nav>
 ${content}
 </body></html>`;
 }
@@ -110,7 +111,7 @@ export default async function handler(req, res) {
   try {
     // POST /create
     if (req.method === 'POST' && path === '/create') {
-      const { code, text, title, author, chapter } = req.body;
+      const { code, text, title, author, chapter, page } = req.body;
       if (!code || code.toUpperCase() !== SECRET_CODE.toUpperCase()) {
         return res.status(403).json({ error: 'Invalid code' });
       }
@@ -118,7 +119,7 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Missing fields' });
       }
       const id = generateId();
-      const highlight = { id, text: text.trim(), title: title.trim(), author: author.trim(), chapter: chapter?.trim(), created_at: new Date().toISOString() };
+      const highlight = { id, text: text.trim(), title: title.trim(), author: author.trim(), chapter: chapter?.trim(), page: page ? String(page).trim() : undefined, created_at: new Date().toISOString() };
       const bookKey = normalizeKey(`${author}_${title}`);
       
       await redis.set(`highlight:${id}`, highlight);
@@ -851,10 +852,227 @@ export default async function handler(req, res) {
           ${highlights.map(h => `<div class="highlight">
             <div class="highlight-actions"><button class="delete-btn" onclick="deleteHighlight('${h.id}', '${bookKey}')">Delete</button></div>
             <div class="highlight-text">"${escapeHtml(h.text)}"</div>
-            ${h.chapter ? `<div class="highlight-meta">${escapeHtml(h.chapter)}</div>` : ''}
+            ${(h.chapter || h.page) ? `<div class="highlight-meta">${h.chapter ? escapeHtml(h.chapter) : ''}${h.chapter && h.page ? ' · ' : ''}${h.page ? `p. ${escapeHtml(h.page)}` : ''}</div>` : ''}
           </div>`).join('')}`;
         return res.status(200).send(htmlPage(book.title, content));
       }
+    }
+
+    // POST /commonplace/ocr - Extract text from image via Claude vision
+    if (req.method === 'POST' && path === '/commonplace/ocr') {
+      const { code, image, mediaType } = req.body;
+      if (!code || code.toUpperCase() !== SECRET_CODE.toUpperCase()) {
+        return res.status(403).json({ error: 'Invalid code' });
+      }
+      if (!image) {
+        return res.status(400).json({ error: 'No image provided' });
+      }
+      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const response = await anthropic.messages.create({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 1024,
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: mediaType || 'image/jpeg',
+                data: image,
+              },
+            },
+            {
+              type: 'text',
+              text: 'Extract the text from this book page photograph. Return only the extracted text, exactly as it appears on the page, with no commentary, no surrounding quotes, and no preamble. Preserve paragraph breaks.'
+            }
+          ]
+        }]
+      });
+      return res.status(200).json({ text: response.content[0].text });
+    }
+
+    // GET /commonplace - Scan physical book passages
+    if (req.method === 'GET' && path === '/commonplace') {
+      const content = `
+        <h1>Commonplace Book</h1>
+        <div id="session-setup" style="background:white;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:20px;">
+          <h2 style="margin-top:0">Current Book</h2>
+          <div id="session-active" style="display:none;">
+            <p id="session-label" style="font-size:1.1em;margin:0 0 10px 0;"></p>
+            <button class="action-btn" onclick="changeBook()" style="font-size:13px;padding:6px 12px;">Change Book</button>
+          </div>
+          <div id="session-form">
+            <div style="margin-bottom:12px;">
+              <label style="display:block;margin-bottom:4px;color:#555;font-size:0.9em;">Book Title</label>
+              <input id="book-title" type="text" placeholder="e.g. Middlemarch" style="width:100%;padding:10px;font-size:16px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;">
+            </div>
+            <div style="margin-bottom:12px;">
+              <label style="display:block;margin-bottom:4px;color:#555;font-size:0.9em;">Author</label>
+              <input id="book-author" type="text" placeholder="e.g. George Eliot" style="width:100%;padding:10px;font-size:16px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;">
+            </div>
+            <div style="margin-bottom:12px;">
+              <label style="display:block;margin-bottom:4px;color:#555;font-size:0.9em;">Verification Code</label>
+              <input id="secret-code" type="password" placeholder="Your code" style="width:100%;padding:10px;font-size:16px;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;">
+            </div>
+            <button class="action-btn" onclick="startSession()">Start Session</button>
+          </div>
+        </div>
+
+        <div id="scan-section" style="display:none;">
+          <div style="background:white;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:20px;">
+            <h2 style="margin-top:0">Scan a Passage</h2>
+            <label for="photo-input" class="action-btn" style="cursor:pointer;display:inline-block;">
+              Take Photo
+            </label>
+            <input id="photo-input" type="file" accept="image/*" capture="environment" style="display:none;" onchange="handlePhoto(this)">
+            <div id="preview-container" style="display:none;margin-top:15px;">
+              <img id="preview-img" style="max-width:100%;border:1px solid #ddd;border-radius:4px;">
+            </div>
+          </div>
+
+          <div id="result-section" style="display:none;background:white;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:20px;">
+            <h2 style="margin-top:0">Extracted Text</h2>
+            <div id="ocr-status" style="margin-bottom:10px;color:#666;font-size:0.9em;"></div>
+            <textarea id="extracted-text" style="width:100%;min-height:150px;padding:10px;font-size:15px;font-family:Georgia,serif;line-height:1.7;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;resize:vertical;"></textarea>
+            <div style="margin-top:12px;display:flex;align-items:center;gap:15px;flex-wrap:wrap;">
+              <div>
+                <label style="display:block;margin-bottom:4px;color:#555;font-size:0.9em;">Page Number (optional)</label>
+                <input id="page-number" type="number" min="1" placeholder="e.g. 142" style="width:120px;padding:8px;font-size:15px;border:1px solid #ddd;border-radius:4px;">
+              </div>
+              <div style="margin-top:20px;">
+                <button class="action-btn" onclick="savePassage()" id="save-btn">Save</button>
+                <button class="action-btn" onclick="resetScan()" style="background:#888;margin-left:8px;">Scan Another</button>
+              </div>
+            </div>
+            <div id="save-status" style="margin-top:12px;display:none;padding:10px;border-radius:4px;"></div>
+          </div>
+        </div>
+
+        <script>
+          const code = localStorage.getItem('cp_code') || '';
+          document.getElementById('secret-code').value = code;
+
+          function startSession() {
+            const title = document.getElementById('book-title').value.trim();
+            const author = document.getElementById('book-author').value.trim();
+            const c = document.getElementById('secret-code').value.trim();
+            if (!title || !author) { alert('Please enter both title and author.'); return; }
+            if (!c) { alert('Please enter your verification code.'); return; }
+            localStorage.setItem('cp_code', c);
+            sessionStorage.setItem('cp_title', title);
+            sessionStorage.setItem('cp_author', author);
+            showSession(title, author);
+          }
+
+          function showSession(title, author) {
+            document.getElementById('session-form').style.display = 'none';
+            document.getElementById('session-active').style.display = 'block';
+            document.getElementById('session-label').textContent = title + ' — ' + author;
+            document.getElementById('scan-section').style.display = 'block';
+          }
+
+          function changeBook() {
+            sessionStorage.removeItem('cp_title');
+            sessionStorage.removeItem('cp_author');
+            document.getElementById('session-form').style.display = 'block';
+            document.getElementById('session-active').style.display = 'none';
+            document.getElementById('scan-section').style.display = 'none';
+            resetScan();
+          }
+
+          function handlePhoto(input) {
+            if (!input.files || !input.files[0]) return;
+            const file = input.files[0];
+            const reader = new FileReader();
+            reader.onload = function(e) {
+              const dataUrl = e.target.result;
+              document.getElementById('preview-img').src = dataUrl;
+              document.getElementById('preview-container').style.display = 'block';
+              runOcr(dataUrl);
+            };
+            reader.readAsDataURL(file);
+          }
+
+          async function runOcr(dataUrl) {
+            const resultSection = document.getElementById('result-section');
+            const statusEl = document.getElementById('ocr-status');
+            const textArea = document.getElementById('extracted-text');
+            resultSection.style.display = 'block';
+            statusEl.textContent = 'Extracting text...';
+            textArea.value = '';
+            document.getElementById('save-btn').disabled = true;
+
+            const parts = dataUrl.split(',');
+            const mediaType = parts[0].match(/:(.*?);/)[1];
+            const base64 = parts[1];
+
+            try {
+              const resp = await fetch('/commonplace/ocr', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ code: localStorage.getItem('cp_code'), image: base64, mediaType })
+              });
+              const data = await resp.json();
+              if (!resp.ok) { statusEl.textContent = 'Error: ' + (data.error || 'Failed'); return; }
+              textArea.value = data.text;
+              statusEl.textContent = 'Done — review and correct if needed.';
+              document.getElementById('save-btn').disabled = false;
+            } catch(e) {
+              statusEl.textContent = 'Connection error.';
+            }
+          }
+
+          async function savePassage() {
+            const text = document.getElementById('extracted-text').value.trim();
+            const page = document.getElementById('page-number').value.trim();
+            const title = sessionStorage.getItem('cp_title');
+            const author = sessionStorage.getItem('cp_author');
+            const c = localStorage.getItem('cp_code');
+            if (!text) { alert('Text is empty.'); return; }
+
+            const statusEl = document.getElementById('save-status');
+            statusEl.style.display = 'block';
+            statusEl.style.background = '#d4edff';
+            statusEl.textContent = 'Saving...';
+
+            try {
+              const resp = await fetch('/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ code: c, text, title, author, page: page || undefined })
+              });
+              const data = await resp.json();
+              if (resp.ok && data.success) {
+                statusEl.style.background = '#d4edda';
+                statusEl.textContent = 'Saved!';
+                document.getElementById('save-btn').disabled = true;
+              } else {
+                statusEl.style.background = '#f8d7da';
+                statusEl.textContent = 'Error: ' + (data.error || 'Failed');
+              }
+            } catch(e) {
+              statusEl.style.background = '#f8d7da';
+              statusEl.textContent = 'Connection error.';
+            }
+          }
+
+          function resetScan() {
+            document.getElementById('photo-input').value = '';
+            document.getElementById('preview-container').style.display = 'none';
+            document.getElementById('result-section').style.display = 'none';
+            document.getElementById('extracted-text').value = '';
+            document.getElementById('page-number').value = '';
+            document.getElementById('save-status').style.display = 'none';
+          }
+
+          // Restore session if already active
+          const savedTitle = sessionStorage.getItem('cp_title');
+          const savedAuthor = sessionStorage.getItem('cp_author');
+          if (savedTitle && savedAuthor) showSession(savedTitle, savedAuthor);
+        </script>
+      `;
+      return res.status(200).send(htmlPage('Commonplace', content));
     }
 
     return res.status(404).send('Not found');
