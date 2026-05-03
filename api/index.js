@@ -867,29 +867,37 @@ export default async function handler(req, res) {
       if (!image) {
         return res.status(400).json({ error: 'No image provided' });
       }
-      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-      const response = await anthropic.messages.create({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1024,
-        messages: [{
-          role: 'user',
-          content: [
-            {
-              type: 'image',
-              source: {
-                type: 'base64',
-                media_type: mediaType || 'image/jpeg',
-                data: image,
+      if (!process.env.ANTHROPIC_API_KEY) {
+        return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured on server' });
+      }
+      try {
+        const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+        const response = await anthropic.messages.create({
+          model: 'claude-haiku-4-5-latest',
+          max_tokens: 1024,
+          messages: [{
+            role: 'user',
+            content: [
+              {
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: mediaType || 'image/jpeg',
+                  data: image,
+                },
               },
-            },
-            {
-              type: 'text',
-              text: 'Extract the text from this book page photograph. Return only the extracted text, exactly as it appears on the page, with no commentary, no surrounding quotes, and no preamble. Preserve paragraph breaks.'
-            }
-          ]
-        }]
-      });
-      return res.status(200).json({ text: response.content[0].text });
+              {
+                type: 'text',
+                text: 'Extract the text from this book page photograph. Return only the extracted text, exactly as it appears on the page, with no commentary, no surrounding quotes, and no preamble. Preserve paragraph breaks.'
+              }
+            ]
+          }]
+        });
+        return res.status(200).json({ text: response.content[0].text });
+      } catch (apiErr) {
+        console.error('Anthropic API error:', apiErr);
+        return res.status(500).json({ error: 'OCR failed: ' + (apiErr.message || 'Unknown error') });
+      }
     }
 
     // GET /commonplace - Scan physical book passages
