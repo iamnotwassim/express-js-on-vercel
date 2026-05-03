@@ -1028,19 +1028,10 @@ export default async function handler(req, res) {
         <div id="scan-section" style="display:none;">
           <div id="camera-card" style="background:white;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:20px;">
             <h2 style="margin-top:0">Scan a Passage</h2>
-            <button class="action-btn" id="start-camera-btn" onclick="startCamera()" style="font-size:16px;padding:14px 28px;">📷 Open Camera</button>
+            <label for="photo-input" class="action-btn" style="cursor:pointer;display:inline-block;font-size:16px;padding:14px 28px;">📷 Take Photo</label>
+            <input id="photo-input" type="file" accept="image/*" capture="environment" style="display:none;" onchange="handlePhoto(this)">
             <div id="preview-container" style="display:none;margin-top:15px;">
               <img id="preview-img" style="max-width:100%;border:1px solid #ddd;border-radius:4px;">
-            </div>
-          </div>
-
-          <div id="camera-overlay" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:#000;z-index:9999;">
-            <video id="camera-feed" autoplay playsinline style="width:100%;height:100%;object-fit:cover;background:#000;"></video>
-            <div style="position:absolute;top:0;left:0;right:0;padding:16px;display:flex;justify-content:flex-end;background:linear-gradient(to bottom, rgba(0,0,0,0.6), transparent);">
-              <button onclick="closeCamera()" style="background:rgba(255,255,255,0.2);color:white;border:none;width:44px;height:44px;border-radius:50%;font-size:20px;cursor:pointer;">✕</button>
-            </div>
-            <div style="position:absolute;bottom:0;left:0;right:0;padding:30px 20px;display:flex;justify-content:center;background:linear-gradient(to top, rgba(0,0,0,0.6), transparent);">
-              <button onclick="capturePhoto()" style="width:80px;height:80px;border-radius:50%;background:white;border:5px solid rgba(255,255,255,0.4);box-shadow:0 0 0 3px white inset;cursor:pointer;"></button>
             </div>
           </div>
 
@@ -1133,52 +1124,30 @@ export default async function handler(req, res) {
             resetScan();
           }
 
-          let cameraStream = null;
-
-          async function startCamera() {
-            try {
-              cameraStream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
-                audio: false
-              });
-              const video = document.getElementById('camera-feed');
-              video.srcObject = cameraStream;
-              document.getElementById('camera-overlay').style.display = 'block';
-              document.body.style.overflow = 'hidden';
-            } catch(e) {
-              alert('Could not access camera. Make sure you have granted camera permission.');
-            }
-          }
-
-          function stopCamera() {
-            if (cameraStream) {
-              cameraStream.getTracks().forEach(t => t.stop());
-              cameraStream = null;
-            }
-            document.getElementById('camera-overlay').style.display = 'none';
-            document.body.style.overflow = '';
-          }
-
-          function closeCamera() {
-            stopCamera();
-          }
-
-          function capturePhoto() {
-            const video = document.getElementById('camera-feed');
-            const maxSize = 1600;
-            let w = video.videoWidth, h = video.videoHeight;
-            if (w > maxSize || h > maxSize) {
-              if (w > h) { h = Math.round(h * maxSize / w); w = maxSize; }
-              else { w = Math.round(w * maxSize / h); h = maxSize; }
-            }
-            const canvas = document.createElement('canvas');
-            canvas.width = w; canvas.height = h;
-            canvas.getContext('2d').drawImage(video, 0, 0, w, h);
-            const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-            document.getElementById('preview-img').src = dataUrl;
-            document.getElementById('preview-container').style.display = 'block';
-            stopCamera();
-            runOcr(dataUrl);
+          function handlePhoto(input) {
+            if (!input.files || !input.files[0]) return;
+            const file = input.files[0];
+            const reader = new FileReader();
+            reader.onload = function(e) {
+              const img = new Image();
+              img.onload = function() {
+                const maxSize = 1600;
+                let w = img.width, h = img.height;
+                if (w > maxSize || h > maxSize) {
+                  if (w > h) { h = Math.round(h * maxSize / w); w = maxSize; }
+                  else { w = Math.round(w * maxSize / h); h = maxSize; }
+                }
+                const canvas = document.createElement('canvas');
+                canvas.width = w; canvas.height = h;
+                canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                document.getElementById('preview-img').src = dataUrl;
+                document.getElementById('preview-container').style.display = 'block';
+                runOcr(dataUrl);
+              };
+              img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
           }
 
           async function runOcr(dataUrl) {
@@ -1275,6 +1244,7 @@ export default async function handler(req, res) {
           }
 
           function resetScan() {
+            document.getElementById('photo-input').value = '';
             document.getElementById('preview-container').style.display = 'none';
             document.getElementById('result-section').style.display = 'none';
             document.getElementById('review-section').style.display = 'none';
@@ -1282,7 +1252,7 @@ export default async function handler(req, res) {
             document.getElementById('page-number').value = '';
             document.getElementById('save-status').style.display = 'none';
             document.getElementById('post-save-actions').style.display = 'none';
-            startCamera();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
           }
 
           // Restore session if already active
