@@ -868,7 +868,7 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'No image provided' });
       }
       if (!process.env.ANTHROPIC_API_KEY) {
-        return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured on server' });
+        return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured. Env vars found: ' + Object.keys(process.env).filter(k => k.includes('ANTHRO') || k.includes('KV') || k.includes('SECRET')).join(', ') });
       }
       try {
         const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
