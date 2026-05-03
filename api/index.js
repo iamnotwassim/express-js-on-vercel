@@ -937,10 +937,13 @@ export default async function handler(req, res) {
         <div id="scan-section" style="display:none;">
           <div style="background:white;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:20px;">
             <h2 style="margin-top:0">Scan a Passage</h2>
-            <label for="photo-input" class="action-btn" style="cursor:pointer;display:inline-block;">
-              Take Photo
-            </label>
-            <input id="photo-input" type="file" accept="image/*" capture="environment" style="display:none;" onchange="handlePhoto(this)">
+            <div id="camera-container">
+              <button class="action-btn" id="start-camera-btn" onclick="startCamera()">Open Camera</button>
+              <div id="video-wrapper" style="display:none;margin-top:15px;position:relative;">
+                <video id="camera-feed" autoplay playsinline style="width:100%;border-radius:4px;"></video>
+                <button onclick="capturePhoto()" style="display:block;margin:10px auto 0;padding:14px 40px;font-size:16px;font-weight:bold;background:#0066cc;color:white;border:none;border-radius:8px;cursor:pointer;">Capture</button>
+              </div>
+            </div>
             <div id="preview-container" style="display:none;margin-top:15px;">
               <img id="preview-img" style="max-width:100%;border:1px solid #ddd;border-radius:4px;">
             </div>
@@ -1018,30 +1021,44 @@ export default async function handler(req, res) {
             resetScan();
           }
 
-          function handlePhoto(input) {
-            if (!input.files || !input.files[0]) return;
-            const file = input.files[0];
-            const reader = new FileReader();
-            reader.onload = function(e) {
-              const img = new Image();
-              img.onload = function() {
-                const maxSize = 1600;
-                let w = img.width, h = img.height;
-                if (w > maxSize || h > maxSize) {
-                  if (w > h) { h = Math.round(h * maxSize / w); w = maxSize; }
-                  else { w = Math.round(w * maxSize / h); h = maxSize; }
-                }
-                const canvas = document.createElement('canvas');
-                canvas.width = w; canvas.height = h;
-                canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-                const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-                document.getElementById('preview-img').src = dataUrl;
-                document.getElementById('preview-container').style.display = 'block';
-                runOcr(dataUrl);
-              };
-              img.src = e.target.result;
-            };
-            reader.readAsDataURL(file);
+          let cameraStream = null;
+
+          async function startCamera() {
+            try {
+              cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+              const video = document.getElementById('camera-feed');
+              video.srcObject = cameraStream;
+              document.getElementById('video-wrapper').style.display = 'block';
+              document.getElementById('start-camera-btn').style.display = 'none';
+            } catch(e) {
+              alert('Could not access camera. Make sure you have granted camera permission.');
+            }
+          }
+
+          function stopCamera() {
+            if (cameraStream) {
+              cameraStream.getTracks().forEach(t => t.stop());
+              cameraStream = null;
+            }
+          }
+
+          function capturePhoto() {
+            const video = document.getElementById('camera-feed');
+            const maxSize = 1600;
+            let w = video.videoWidth, h = video.videoHeight;
+            if (w > maxSize || h > maxSize) {
+              if (w > h) { h = Math.round(h * maxSize / w); w = maxSize; }
+              else { w = Math.round(w * maxSize / h); h = maxSize; }
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = w; canvas.height = h;
+            canvas.getContext('2d').drawImage(video, 0, 0, w, h);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+            document.getElementById('preview-img').src = dataUrl;
+            document.getElementById('preview-container').style.display = 'block';
+            document.getElementById('video-wrapper').style.display = 'none';
+            stopCamera();
+            runOcr(dataUrl);
           }
 
           async function runOcr(dataUrl) {
@@ -1108,12 +1125,12 @@ export default async function handler(req, res) {
           }
 
           function resetScan() {
-            document.getElementById('photo-input').value = '';
             document.getElementById('preview-container').style.display = 'none';
             document.getElementById('result-section').style.display = 'none';
             document.getElementById('extracted-text').value = '';
             document.getElementById('page-number').value = '';
             document.getElementById('save-status').style.display = 'none';
+            startCamera();
           }
 
           // Restore session if already active
