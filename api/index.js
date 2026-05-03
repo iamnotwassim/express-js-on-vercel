@@ -1106,19 +1106,31 @@ export default async function handler(req, res) {
             const author = localStorage.getItem('cp_author');
             const c = localStorage.getItem('cp_code');
             if (!text) { alert('Text is empty.'); return; }
+            if (!title || !author) { alert('Book session lost. Please change book and re-select.'); return; }
+            if (!c) { alert('Verification code missing. Please change book and re-enter.'); return; }
 
             const statusEl = document.getElementById('save-status');
             statusEl.style.display = 'block';
             statusEl.style.background = '#d4edff';
-            statusEl.textContent = 'Saving...';
+            statusEl.textContent = 'Saving (' + text.length + ' chars)...';
+
+            const payload = { code: c, text: text, title: title, author: author };
+            if (page) payload.page = page;
 
             try {
+              const body = JSON.stringify(payload);
               const resp = await fetch('/create', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ code: c, text, title, author, page: page || undefined })
+                body: body
               });
-              const data = await resp.json();
+              const respText = await resp.text();
+              let data;
+              try { data = JSON.parse(respText); } catch(pe) {
+                statusEl.style.background = '#f8d7da';
+                statusEl.textContent = 'Server returned invalid response: ' + respText.substring(0, 200);
+                return;
+              }
               if (resp.ok && data.success) {
                 statusEl.style.background = '#d4edda';
                 statusEl.textContent = 'Saved!';
@@ -1129,7 +1141,7 @@ export default async function handler(req, res) {
               }
             } catch(e) {
               statusEl.style.background = '#f8d7da';
-              statusEl.textContent = 'Connection error: ' + e.message;
+              statusEl.textContent = 'Fetch error: ' + e.name + ': ' + e.message + ' | title=' + (title||'null') + ' textLen=' + text.length;
             }
           }
 
