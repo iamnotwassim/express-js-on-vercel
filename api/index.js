@@ -903,6 +903,9 @@ export default async function handler(req, res) {
 
     // GET /commonplace - Scan physical book passages
     if (req.method === 'GET' && path === '/commonplace') {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
       const bookKeys = await safeGetArray('books');
       const bookList = [];
       for (const key of bookKeys) {
@@ -910,8 +913,9 @@ export default async function handler(req, res) {
         if (b) bookList.push({ title: b.title, author: b.author });
       }
       const booksJson = JSON.stringify(bookList);
+      const VERSION = 'v12-' + Date.now();
       const content = `
-        <h1>Commonplace Book</h1>
+        <h1>Commonplace Book <span style="font-size:0.4em;color:#999;">${VERSION}</span></h1>
         <div id="session-setup" style="background:white;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:20px;">
           <h2 style="margin-top:0">Current Book</h2>
           <div id="session-active" style="display:none;">
