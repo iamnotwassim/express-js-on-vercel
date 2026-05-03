@@ -121,29 +121,43 @@ export default async function handler(req, res) {
       const id = generateId();
       const highlight = { id, text: text.trim(), title: title.trim(), author: author.trim(), chapter: chapter?.trim(), page: page ? String(page).trim() : undefined, created_at: new Date().toISOString() };
       const bookKey = normalizeKey(`${author}_${title}`);
-      
-      await redis.set(`highlight:${id}`, highlight);
-      
-      const bookHighlights = await safeGetArray(`book_highlights:${bookKey}`);
-      bookHighlights.push(id);
-      await redis.set(`book_highlights:${bookKey}`, bookHighlights);
-      
-      const book = await safeGet(`book:${bookKey}`) || { title: title.trim(), author: author.trim(), highlight_count: 0 };
-      book.highlight_count = (book.highlight_count || 0) + 1;
-      book.last_updated = highlight.created_at;
-      await redis.set(`book:${bookKey}`, book);
-      
-      const books = await safeGetArray('books');
-      if (!books.includes(bookKey)) { 
-        books.push(bookKey); 
-        await redis.set('books', books); 
+      let step = 'init';
+      try {
+        step = 'set highlight';
+        await redis.set(`highlight:${id}`, highlight);
+
+        step = 'get book_highlights';
+        const bookHighlights = await safeGetArray(`book_highlights:${bookKey}`);
+        bookHighlights.push(id);
+        step = 'set book_highlights';
+        await redis.set(`book_highlights:${bookKey}`, bookHighlights);
+
+        step = 'get book';
+        const book = await safeGet(`book:${bookKey}`) || { title: title.trim(), author: author.trim(), highlight_count: 0 };
+        book.highlight_count = (book.highlight_count || 0) + 1;
+        book.last_updated = highlight.created_at;
+        step = 'set book';
+        await redis.set(`book:${bookKey}`, book);
+
+        step = 'get books';
+        const books = await safeGetArray('books');
+        if (!books.includes(bookKey)) {
+          books.push(bookKey);
+          step = 'set books';
+          await redis.set('books', books);
+        }
+
+        step = 'get all_highlights';
+        const allHighlights = await safeGetArray('all_highlights');
+        allHighlights.unshift(id);
+        step = 'set all_highlights (size=' + allHighlights.length + ')';
+        await redis.set('all_highlights', allHighlights);
+
+        return res.status(200).json({ success: true, id });
+      } catch (redisErr) {
+        console.error('Redis error at step', step, redisErr);
+        return res.status(500).json({ error: 'Redis failed at step: ' + step, details: redisErr.message });
       }
-      
-      const allHighlights = await safeGetArray('all_highlights');
-      allHighlights.unshift(id);
-      await redis.set('all_highlights', allHighlights);
-      
-      return res.status(200).json({ success: true, id });
     }
 
     // POST /upload_book - Upload full marked text export
