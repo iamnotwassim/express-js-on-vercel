@@ -78,7 +78,7 @@ function deleteLobExcerpt(id) {
 }
 </script>
 </head><body>
-<nav class="nav"><a href="/">Home</a><a href="/books">Books</a><a href="/commonplace">Commonplace</a><a href="/marked">Marked</a><a href="/lob">LoB</a><a href="/search">Search</a><a href="/export">Export</a></nav>
+<nav class="nav"><a href="/">Home</a><a href="/books">Books</a><a href="/commonplace">Commonplace</a><a href="/commonplace/library">Library</a><a href="/marked">Marked</a><a href="/lob">LoB</a><a href="/search">Search</a><a href="/export">Export</a></nav>
 ${content}
 </body></html>`;
 }
@@ -111,7 +111,7 @@ export default async function handler(req, res) {
   try {
     // POST /create
     if (req.method === 'POST' && path === '/create') {
-      const { code, text, title, author, chapter, page } = req.body;
+      const { code, text, title, author, chapter, page, source } = req.body;
       if (!code || code.toUpperCase() !== SECRET_CODE.toUpperCase()) {
         return res.status(403).json({ error: 'Invalid code' });
       }
@@ -119,45 +119,53 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Missing fields' });
       }
       const id = generateId();
-      const highlight = { id, text: text.trim(), title: title.trim(), author: author.trim(), chapter: chapter?.trim(), page: page ? String(page).trim() : undefined, created_at: new Date().toISOString() };
+      const highlight = { id, text: text.trim(), title: title.trim(), author: author.trim(), chapter: chapter?.trim(), page: page ? String(page).trim() : undefined, source: source || 'ebook', created_at: new Date().toISOString() };
       const bookKey = normalizeKey(`${author}_${title}`);
-      let step = 'init';
       try {
-        step = 'set highlight';
         await redis.set(`highlight:${id}`, highlight);
 
-        step = 'get book_highlights';
         const bookHighlights = await safeGetArray(`book_highlights:${bookKey}`);
         bookHighlights.push(id);
-        step = 'set book_highlights';
         await redis.set(`book_highlights:${bookKey}`, bookHighlights);
 
-        step = 'get book';
-        const book = await safeGet(`book:${bookKey}`) || { title: title.trim(), author: author.trim(), highlight_count: 0 };
+        const book = await safeGet(`book:${bookKey}`) || { title: title.trim(), author: author.trim(), highlight_count: 0, source: source || 'ebook' };
         book.highlight_count = (book.highlight_count || 0) + 1;
         book.last_updated = highlight.created_at;
-        step = 'set book';
+        if (!book.source) book.source = source || 'ebook';
         await redis.set(`book:${bookKey}`, book);
 
-        step = 'get books';
         const books = await safeGetArray('books');
         if (!books.includes(bookKey)) {
           books.push(bookKey);
-          step = 'set books';
           await redis.set('books', books);
         }
 
-        step = 'get all_highlights';
         const allHighlights = await safeGetArray('all_highlights');
         allHighlights.unshift(id);
-        step = 'set all_highlights (size=' + allHighlights.length + ')';
         await redis.set('all_highlights', allHighlights);
 
         return res.status(200).json({ success: true, id });
       } catch (redisErr) {
-        console.error('Redis error at step', step, redisErr);
-        return res.status(500).json({ error: 'Redis failed at step: ' + step, details: redisErr.message });
+        console.error('Redis error:', redisErr);
+        return res.status(500).json({ error: 'Save failed', details: redisErr.message });
       }
+    }
+
+    // POST /update/highlight/:id - Edit an existing highlight
+    if (req.method === 'POST' && path.startsWith('/update/highlight/')) {
+      const id = path.replace('/update/highlight/', '');
+      const { code, text, page, chapter } = req.body;
+      if (!code || code.toUpperCase() !== SECRET_CODE.toUpperCase()) {
+        return res.status(403).json({ error: 'Invalid code' });
+      }
+      const existing = await safeGet(`highlight:${id}`);
+      if (!existing) return res.status(404).json({ error: 'Highlight not found' });
+      if (text !== undefined) existing.text = String(text).trim();
+      if (page !== undefined) existing.page = page ? String(page).trim() : undefined;
+      if (chapter !== undefined) existing.chapter = chapter ? String(chapter).trim() : undefined;
+      existing.updated_at = new Date().toISOString();
+      await redis.set(`highlight:${id}`, existing);
+      return res.status(200).json({ success: true });
     }
 
     // POST /upload_book - Upload full marked text export
@@ -724,13 +732,29 @@ export default async function handler(req, res) {
         const books = [];
         for (const key of bookKeys) {
           const b = await safeGet(`book:${key}`);
-          if (b) books.push({ ...b, key });
+          if (b && b.source !== 'commonplace') books.push({ ...b, key });
         }
         const content = `<h1>📖 Books (${books.length})</h1>
           ${books.map(b => `<a href="/book/${b.key}" style="text-decoration:none;color:inherit">
           <div class="book-card"><div><h3 style="margin:0">${escapeHtml(b.title)}</h3><p style="margin:0;color:#666">${escapeHtml(b.author)}</p></div>
           <div class="book-count">${b.highlight_count || 0}</div></div></a>`).join('')}`;
         return res.status(200).send(htmlPage('Books', content));
+      }
+
+      if (path === '/commonplace/library') {
+        const bookKeys = await safeGetArray('books');
+        const books = [];
+        for (const key of bookKeys) {
+          const b = await safeGet(`book:${key}`);
+          if (b && b.source === 'commonplace') books.push({ ...b, key });
+        }
+        const content = `<h1>📔 Commonplace Library (${books.length})</h1>
+          <p><a href="/commonplace" class="action-btn">+ Scan New Passage</a></p>
+          ${books.length === 0 ? '<p style="color:#999;padding:20px;">No commonplace books yet. Scan one from the <a href="/commonplace">Commonplace</a> page.</p>' : ''}
+          ${books.map(b => `<a href="/book/${b.key}" style="text-decoration:none;color:inherit">
+          <div class="book-card"><div><h3 style="margin:0">${escapeHtml(b.title)}</h3><p style="margin:0;color:#666">${escapeHtml(b.author)}</p></div>
+          <div class="book-count">${b.highlight_count || 0}</div></div></a>`).join('')}`;
+        return res.status(200).send(htmlPage('Commonplace Library', content));
       }
 
       if (path === '/search') {
@@ -863,27 +887,54 @@ export default async function handler(req, res) {
             <a href="/export/book/${bookKey}?format=json" class="action-btn">Export JSON</a>
             <button onclick="deleteBook('${bookKey}')" class="action-btn danger">Delete Book</button>
           </div>
-          ${highlights.map(h => `<div class="highlight">
-            <div class="highlight-actions"><button class="delete-btn" onclick="deleteHighlight('${h.id}', '${bookKey}')">Delete</button></div>
-            <div class="highlight-text">"${escapeHtml(h.text)}"</div>
-            ${(h.chapter || h.page) ? `<div class="highlight-meta">${h.chapter ? escapeHtml(h.chapter) : ''}${h.chapter && h.page ? ' · ' : ''}${h.page ? `p. ${escapeHtml(h.page)}` : ''}</div>` : ''}
-          </div>`).join('')}`;
+          ${highlights.map(h => `<div class="highlight" id="hl-${h.id}">
+            <div class="highlight-actions">
+              <button class="delete-btn" style="background:#0066cc;margin-right:5px" onclick="editHighlight('${h.id}')">Edit</button>
+              <button class="delete-btn" onclick="deleteHighlight('${h.id}', '${bookKey}')">Delete</button>
+            </div>
+            <div class="hl-display">
+              <div class="highlight-text">"${escapeHtml(h.text)}"</div>
+              ${(h.chapter || h.page) ? `<div class="highlight-meta">${h.chapter ? escapeHtml(h.chapter) : ''}${h.chapter && h.page ? ' · ' : ''}${h.page ? `p. ${escapeHtml(h.page)}` : ''}</div>` : ''}
+            </div>
+            <div class="hl-edit" style="display:none">
+              <textarea class="hl-edit-text" style="width:100%;min-height:120px;padding:10px;font-size:15px;font-family:Georgia,serif;line-height:1.7;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;">${escapeHtml(h.text)}</textarea>
+              <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <input class="hl-edit-page" type="number" placeholder="Page" value="${h.page ? escapeHtml(h.page) : ''}" style="width:90px;padding:6px;font-size:14px;border:1px solid #ddd;border-radius:4px;">
+                <button class="action-btn" onclick="saveEdit('${h.id}')">Save</button>
+                <button class="action-btn" style="background:#888" onclick="cancelEdit('${h.id}')">Cancel</button>
+              </div>
+            </div>
+          </div>`).join('')}
+          <script>
+            function editHighlight(id) {
+              const el = document.getElementById('hl-' + id);
+              el.querySelector('.hl-display').style.display = 'none';
+              el.querySelector('.hl-edit').style.display = 'block';
+            }
+            function cancelEdit(id) {
+              const el = document.getElementById('hl-' + id);
+              el.querySelector('.hl-display').style.display = 'block';
+              el.querySelector('.hl-edit').style.display = 'none';
+            }
+            async function saveEdit(id) {
+              const el = document.getElementById('hl-' + id);
+              const text = el.querySelector('.hl-edit-text').value.trim();
+              const page = el.querySelector('.hl-edit-page').value.trim();
+              const code = prompt('Verification code:', localStorage.getItem('cp_code') || '');
+              if (!code) return;
+              localStorage.setItem('cp_code', code);
+              const r = await fetch('/update/highlight/' + id, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ code, text, page: page || undefined })
+              });
+              const d = await r.json();
+              if (d.success) location.reload();
+              else alert('Error: ' + (d.error || 'Failed'));
+            }
+          </script>`;
         return res.status(200).send(htmlPage(book.title, content));
       }
-    }
-
-    // GET /redis-test - Test Redis read and write
-    if (req.method === 'GET' && path === '/redis-test') {
-      const result = { kv_url_set: !!process.env.KV_REST_API_URL, kv_token_set: !!process.env.KV_REST_API_TOKEN };
-      try {
-        await redis.set('test:ping', 'hello-' + Date.now());
-        result.write = 'ok';
-      } catch (e) { result.write = 'FAILED: ' + e.message; }
-      try {
-        const v = await redis.get('test:ping');
-        result.read = v || 'empty';
-      } catch (e) { result.read = 'FAILED: ' + e.message; }
-      return res.status(200).json(result);
     }
 
     // POST /commonplace/ocr - Extract text from image via Claude vision
@@ -938,12 +989,11 @@ export default async function handler(req, res) {
       const bookList = [];
       for (const key of bookKeys) {
         const b = await safeGet(`book:${key}`);
-        if (b) bookList.push({ title: b.title, author: b.author });
+        if (b && b.source === 'commonplace') bookList.push({ title: b.title, author: b.author });
       }
       const booksJson = JSON.stringify(bookList);
-      const VERSION = 'v12-' + Date.now();
       const content = `
-        <h1>Commonplace Book <span style="font-size:0.4em;color:#999;">${VERSION}</span></h1>
+        <h1>Commonplace Book</h1>
         <div id="session-setup" style="background:white;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:20px;">
           <h2 style="margin-top:0">Current Book</h2>
           <div id="session-active" style="display:none;">
@@ -976,35 +1026,56 @@ export default async function handler(req, res) {
         </div>
 
         <div id="scan-section" style="display:none;">
-          <div style="background:white;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:20px;">
+          <div id="camera-card" style="background:white;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:20px;">
             <h2 style="margin-top:0">Scan a Passage</h2>
-            <div id="camera-container">
-              <button class="action-btn" id="start-camera-btn" onclick="startCamera()">Open Camera</button>
-              <div id="video-wrapper" style="display:none;margin-top:15px;position:relative;">
-                <video id="camera-feed" autoplay playsinline style="width:100%;border-radius:4px;"></video>
-                <button onclick="capturePhoto()" style="display:block;margin:10px auto 0;padding:14px 40px;font-size:16px;font-weight:bold;background:#0066cc;color:white;border:none;border-radius:8px;cursor:pointer;">Capture</button>
-              </div>
-            </div>
+            <button class="action-btn" id="start-camera-btn" onclick="startCamera()" style="font-size:16px;padding:14px 28px;">📷 Open Camera</button>
             <div id="preview-container" style="display:none;margin-top:15px;">
               <img id="preview-img" style="max-width:100%;border:1px solid #ddd;border-radius:4px;">
+            </div>
+          </div>
+
+          <div id="camera-overlay" style="display:none;position:fixed;top:0;left:0;width:100vw;height:100vh;background:#000;z-index:9999;">
+            <video id="camera-feed" autoplay playsinline style="width:100%;height:100%;object-fit:cover;background:#000;"></video>
+            <div style="position:absolute;top:0;left:0;right:0;padding:16px;display:flex;justify-content:flex-end;background:linear-gradient(to bottom, rgba(0,0,0,0.6), transparent);">
+              <button onclick="closeCamera()" style="background:rgba(255,255,255,0.2);color:white;border:none;width:44px;height:44px;border-radius:50%;font-size:20px;cursor:pointer;">✕</button>
+            </div>
+            <div style="position:absolute;bottom:0;left:0;right:0;padding:30px 20px;display:flex;justify-content:center;background:linear-gradient(to top, rgba(0,0,0,0.6), transparent);">
+              <button onclick="capturePhoto()" style="width:80px;height:80px;border-radius:50%;background:white;border:5px solid rgba(255,255,255,0.4);box-shadow:0 0 0 3px white inset;cursor:pointer;"></button>
             </div>
           </div>
 
           <div id="result-section" style="display:none;background:white;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:20px;">
             <h2 style="margin-top:0">Extracted Text</h2>
             <div id="ocr-status" style="margin-bottom:10px;color:#666;font-size:0.9em;"></div>
-            <textarea id="extracted-text" style="width:100%;min-height:150px;padding:10px;font-size:15px;font-family:Georgia,serif;line-height:1.7;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;resize:vertical;"></textarea>
+            <textarea id="extracted-text" style="width:100%;min-height:200px;padding:10px;font-size:15px;font-family:Georgia,serif;line-height:1.7;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;resize:vertical;"></textarea>
+            <p style="color:#666;font-size:0.85em;margin:8px 0 0 0;">Trim any unnecessary text before continuing.</p>
             <div style="margin-top:12px;display:flex;align-items:center;gap:15px;flex-wrap:wrap;">
               <div>
                 <label style="display:block;margin-bottom:4px;color:#555;font-size:0.9em;">Page Number (optional)</label>
                 <input id="page-number" type="number" min="1" placeholder="e.g. 142" style="width:120px;padding:8px;font-size:15px;border:1px solid #ddd;border-radius:4px;">
               </div>
               <div style="margin-top:20px;">
-                <button class="action-btn" onclick="savePassage()" id="save-btn">Save</button>
-                <button class="action-btn" onclick="resetScan()" style="background:#888;margin-left:8px;">Scan Another</button>
+                <button class="action-btn" onclick="goToReview()" id="review-btn">Review</button>
+                <button class="action-btn" onclick="resetScan()" style="background:#888;margin-left:8px;">Discard</button>
               </div>
             </div>
+          </div>
+
+          <div id="review-section" style="display:none;background:white;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:20px;">
+            <h2 style="margin-top:0">Review Before Saving</h2>
+            <div style="border-left:4px solid #0066cc;padding:15px 20px;background:#fafafa;margin:15px 0;">
+              <div id="review-text" style="font-style:italic;font-size:1.05em;line-height:1.7;font-family:Georgia,serif;white-space:pre-wrap;"></div>
+              <div id="review-meta" style="font-size:0.9em;color:#888;margin-top:12px;"></div>
+            </div>
+            <div style="margin-top:15px;">
+              <button class="action-btn" onclick="savePassage()" id="save-btn">Confirm &amp; Save</button>
+              <button class="action-btn" onclick="backToEdit()" style="background:#888;margin-left:8px;">← Back to Edit</button>
+            </div>
             <div id="save-status" style="margin-top:12px;display:none;padding:10px;border-radius:4px;"></div>
+            <div id="post-save-actions" style="display:none;margin-top:15px;">
+              <button class="action-btn" onclick="resetScan()">Scan Another</button>
+              <a href="/commonplace/library" class="action-btn" style="background:#888;margin-left:8px;">View Library</a>
+            </div>
           </div>
         </div>
 
@@ -1066,11 +1137,14 @@ export default async function handler(req, res) {
 
           async function startCamera() {
             try {
-              cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+              cameraStream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+                audio: false
+              });
               const video = document.getElementById('camera-feed');
               video.srcObject = cameraStream;
-              document.getElementById('video-wrapper').style.display = 'block';
-              document.getElementById('start-camera-btn').style.display = 'none';
+              document.getElementById('camera-overlay').style.display = 'block';
+              document.body.style.overflow = 'hidden';
             } catch(e) {
               alert('Could not access camera. Make sure you have granted camera permission.');
             }
@@ -1081,6 +1155,12 @@ export default async function handler(req, res) {
               cameraStream.getTracks().forEach(t => t.stop());
               cameraStream = null;
             }
+            document.getElementById('camera-overlay').style.display = 'none';
+            document.body.style.overflow = '';
+          }
+
+          function closeCamera() {
+            stopCamera();
           }
 
           function capturePhoto() {
@@ -1097,7 +1177,6 @@ export default async function handler(req, res) {
             const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
             document.getElementById('preview-img').src = dataUrl;
             document.getElementById('preview-container').style.display = 'block';
-            document.getElementById('video-wrapper').style.display = 'none';
             stopCamera();
             runOcr(dataUrl);
           }
@@ -1131,6 +1210,28 @@ export default async function handler(req, res) {
             }
           }
 
+          function goToReview() {
+            const text = document.getElementById('extracted-text').value.trim();
+            const page = document.getElementById('page-number').value.trim();
+            const title = localStorage.getItem('cp_title');
+            const author = localStorage.getItem('cp_author');
+            if (!text) { alert('Text is empty.'); return; }
+            document.getElementById('review-text').textContent = text;
+            const meta = title + ' — ' + author + (page ? ' · p. ' + page : '');
+            document.getElementById('review-meta').textContent = meta;
+            document.getElementById('result-section').style.display = 'none';
+            document.getElementById('review-section').style.display = 'block';
+            document.getElementById('save-btn').disabled = false;
+            document.getElementById('save-status').style.display = 'none';
+            document.getElementById('post-save-actions').style.display = 'none';
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }
+
+          function backToEdit() {
+            document.getElementById('review-section').style.display = 'none';
+            document.getElementById('result-section').style.display = 'block';
+          }
+
           async function savePassage() {
             const text = document.getElementById('extracted-text').value.trim();
             const page = document.getElementById('page-number').value.trim();
@@ -1138,53 +1239,49 @@ export default async function handler(req, res) {
             const author = localStorage.getItem('cp_author');
             const c = localStorage.getItem('cp_code');
             if (!text) { alert('Text is empty.'); return; }
-            if (!title || !author) { alert('Book session lost. Please change book and re-select.'); return; }
-            if (!c) { alert('Verification code missing. Please change book and re-enter.'); return; }
+            if (!title || !author) { alert('Book session lost.'); return; }
+            if (!c) { alert('Verification code missing.'); return; }
 
             const statusEl = document.getElementById('save-status');
             statusEl.style.display = 'block';
             statusEl.style.background = '#d4edff';
-            statusEl.textContent = 'Saving (' + text.length + ' chars)...';
+            statusEl.textContent = 'Saving...';
+            document.getElementById('save-btn').disabled = true;
 
-            const payload = { code: c, text: text, title: title, author: author };
+            const payload = { code: c, text, title, author, source: 'commonplace' };
             if (page) payload.page = page;
 
             try {
-              const body = JSON.stringify(payload);
               const resp = await fetch('/create', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: body
+                body: JSON.stringify(payload)
               });
-              const respText = await resp.text();
-              let data;
-              try { data = JSON.parse(respText); } catch(pe) {
-                statusEl.style.background = '#f8d7da';
-                statusEl.textContent = 'Server returned invalid response: ' + respText.substring(0, 200);
-                return;
-              }
+              const data = await resp.json();
               if (resp.ok && data.success) {
                 statusEl.style.background = '#d4edda';
-                statusEl.textContent = 'Saved!';
-                document.getElementById('save-btn').disabled = true;
+                statusEl.textContent = '✓ Saved to your commonplace book.';
+                document.getElementById('post-save-actions').style.display = 'block';
               } else {
                 statusEl.style.background = '#f8d7da';
                 statusEl.textContent = 'Error: ' + (data.error || 'Failed') + (data.details ? ' — ' + data.details : '');
+                document.getElementById('save-btn').disabled = false;
               }
             } catch(e) {
-              const msg = 'ERR ' + e.name + ': ' + e.message + ' | title=' + (title||'NULL') + ' | code=' + (c ? 'present' : 'MISSING') + ' | len=' + text.length;
               statusEl.style.background = '#f8d7da';
-              statusEl.textContent = msg;
-              document.getElementById('extracted-text').value = msg;
+              statusEl.textContent = 'Error: ' + e.message;
+              document.getElementById('save-btn').disabled = false;
             }
           }
 
           function resetScan() {
             document.getElementById('preview-container').style.display = 'none';
             document.getElementById('result-section').style.display = 'none';
+            document.getElementById('review-section').style.display = 'none';
             document.getElementById('extracted-text').value = '';
             document.getElementById('page-number').value = '';
             document.getElementById('save-status').style.display = 'none';
+            document.getElementById('post-save-actions').style.display = 'none';
             startCamera();
           }
 
