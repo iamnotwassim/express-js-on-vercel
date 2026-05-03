@@ -867,8 +867,9 @@ export default async function handler(req, res) {
       if (!image) {
         return res.status(400).json({ error: 'No image provided' });
       }
-      if (!process.env.ANTHROPIC_API_KEY) {
-        return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured. Env vars found: ' + Object.keys(process.env).filter(k => k.includes('ANTHRO') || k.includes('KV') || k.includes('SECRET')).join(', ') });
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (!apiKey || apiKey.trim().length === 0) {
+        return res.status(500).json({ error: 'ANTHROPIC_API_KEY is empty. Type: ' + typeof apiKey + ', length: ' + (apiKey ? apiKey.length : 'null') });
       }
       try {
         const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
