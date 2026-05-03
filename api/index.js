@@ -1125,11 +1125,11 @@ export default async function handler(req, res) {
                 document.getElementById('save-btn').disabled = true;
               } else {
                 statusEl.style.background = '#f8d7da';
-                statusEl.textContent = 'Error: ' + (data.error || 'Failed');
+                statusEl.textContent = 'Error: ' + (data.error || 'Failed') + (data.details ? ' — ' + data.details : '');
               }
             } catch(e) {
               statusEl.style.background = '#f8d7da';
-              statusEl.textContent = 'Connection error.';
+              statusEl.textContent = 'Connection error: ' + e.message;
             }
           }
 
