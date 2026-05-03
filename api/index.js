@@ -1140,10 +1140,10 @@ export default async function handler(req, res) {
                 statusEl.textContent = 'Error: ' + (data.error || 'Failed') + (data.details ? ' — ' + data.details : '');
               }
             } catch(e) {
-              const msg = 'Fetch error: ' + e.name + ': ' + e.message + ' | title=' + (title||'null') + ' | textLen=' + text.length + ' | code=' + (c ? 'present' : 'MISSING');
+              const msg = 'ERR ' + e.name + ': ' + e.message + ' | title=' + (title||'NULL') + ' | code=' + (c ? 'present' : 'MISSING') + ' | len=' + text.length;
               statusEl.style.background = '#f8d7da';
               statusEl.textContent = msg;
-              alert(msg);
+              document.getElementById('extracted-text').value = msg;
             }
           }
 
