@@ -872,6 +872,20 @@ export default async function handler(req, res) {
       }
     }
 
+    // GET /redis-test - Test Redis read and write
+    if (req.method === 'GET' && path === '/redis-test') {
+      const result = { kv_url_set: !!process.env.KV_REST_API_URL, kv_token_set: !!process.env.KV_REST_API_TOKEN };
+      try {
+        await redis.set('test:ping', 'hello-' + Date.now());
+        result.write = 'ok';
+      } catch (e) { result.write = 'FAILED: ' + e.message; }
+      try {
+        const v = await redis.get('test:ping');
+        result.read = v || 'empty';
+      } catch (e) { result.read = 'FAILED: ' + e.message; }
+      return res.status(200).json(result);
+    }
+
     // POST /commonplace/ocr - Extract text from image via Claude vision
     if (req.method === 'POST' && path === '/commonplace/ocr') {
       const { code, image, mediaType } = req.body;
