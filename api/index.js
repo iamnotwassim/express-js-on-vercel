@@ -1028,8 +1028,9 @@ export default async function handler(req, res) {
         <div id="scan-section" style="display:none;">
           <div id="camera-card" style="background:white;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:20px;">
             <h2 style="margin-top:0">Scan a Passage</h2>
-            <label for="photo-input" class="action-btn" style="cursor:pointer;display:inline-block;font-size:16px;padding:14px 28px;">📷 Take Photo</label>
-            <input id="photo-input" type="file" accept="image/*" capture="environment" style="display:none;" onchange="handlePhoto(this)">
+            <label for="photo-input" class="action-btn" style="cursor:pointer;display:inline-block;font-size:16px;padding:14px 28px;">📷 Add Photo</label>
+            <input id="photo-input" type="file" accept="image/*" style="display:none;" onchange="handlePhoto(this)">
+            <p style="color:#666;font-size:0.85em;margin:10px 0 0 0;">Take a photo with your camera app, then come back here and upload it. Or select an existing photo from your gallery.</p>
             <div id="preview-container" style="display:none;margin-top:15px;">
               <img id="preview-img" style="max-width:100%;border:1px solid #ddd;border-radius:4px;">
             </div>
