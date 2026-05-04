@@ -1027,47 +1027,19 @@ export default async function handler(req, res) {
 
         <div id="scan-section" style="display:none;">
           <div id="camera-card" style="background:white;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:20px;">
-            <h2 style="margin-top:0">Scan a Passage</h2>
-            <label for="photo-input" class="action-btn" style="cursor:pointer;display:inline-block;font-size:16px;padding:14px 28px;">📷 Add Photo</label>
-            <input id="photo-input" type="file" accept="image/*" style="display:none;" onchange="handlePhoto(this)">
-            <p style="color:#666;font-size:0.85em;margin:10px 0 0 0;">Take a photo with your camera app, then come back here and upload it. Or select an existing photo from your gallery.</p>
-            <div id="preview-container" style="display:none;margin-top:15px;">
-              <img id="preview-img" style="max-width:100%;border:1px solid #ddd;border-radius:4px;">
-            </div>
+            <h2 style="margin-top:0">Add Passages</h2>
+            <label for="photo-input" class="action-btn" style="cursor:pointer;display:inline-block;font-size:16px;padding:14px 28px;">📷 Add Photo(s)</label>
+            <input id="photo-input" type="file" accept="image/*" multiple style="display:none;" onchange="handlePhotos(this)">
+            <p style="color:#666;font-size:0.85em;margin:10px 0 0 0;">Pick one or many photos. Each gets OCR'd and shown below for review before saving.</p>
           </div>
 
-          <div id="result-section" style="display:none;background:white;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:20px;">
-            <h2 style="margin-top:0">Extracted Text</h2>
-            <div id="ocr-status" style="margin-bottom:10px;color:#666;font-size:0.9em;"></div>
-            <textarea id="extracted-text" style="width:100%;min-height:200px;padding:10px;font-size:15px;font-family:Georgia,serif;line-height:1.7;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;resize:vertical;"></textarea>
-            <p style="color:#666;font-size:0.85em;margin:8px 0 0 0;">Trim any unnecessary text before continuing.</p>
-            <div style="margin-top:12px;display:flex;align-items:center;gap:15px;flex-wrap:wrap;">
-              <div>
-                <label style="display:block;margin-bottom:4px;color:#555;font-size:0.9em;">Page Number (optional)</label>
-                <input id="page-number" type="number" min="1" placeholder="e.g. 142" style="width:120px;padding:8px;font-size:15px;border:1px solid #ddd;border-radius:4px;">
-              </div>
-              <div style="margin-top:20px;">
-                <button class="action-btn" onclick="goToReview()" id="review-btn">Review</button>
-                <button class="action-btn" onclick="resetScan()" style="background:#888;margin-left:8px;">Discard</button>
-              </div>
-            </div>
-          </div>
+          <div id="cards-container"></div>
 
-          <div id="review-section" style="display:none;background:white;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:20px;">
-            <h2 style="margin-top:0">Review Before Saving</h2>
-            <div style="border-left:4px solid #0066cc;padding:15px 20px;background:#fafafa;margin:15px 0;">
-              <div id="review-text" style="font-style:italic;font-size:1.05em;line-height:1.7;font-family:Georgia,serif;white-space:pre-wrap;"></div>
-              <div id="review-meta" style="font-size:0.9em;color:#888;margin-top:12px;"></div>
-            </div>
-            <div style="margin-top:15px;">
-              <button class="action-btn" onclick="savePassage()" id="save-btn">Confirm &amp; Save</button>
-              <button class="action-btn" onclick="backToEdit()" style="background:#888;margin-left:8px;">← Back to Edit</button>
-            </div>
-            <div id="save-status" style="margin-top:12px;display:none;padding:10px;border-radius:4px;"></div>
-            <div id="post-save-actions" style="display:none;margin-top:15px;">
-              <button class="action-btn" onclick="resetScan()">Scan Another</button>
-              <a href="/commonplace/library" class="action-btn" style="background:#888;margin-left:8px;">View Library</a>
-            </div>
+          <div id="bulk-actions" style="display:none;background:white;padding:20px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:20px;position:sticky;bottom:0;">
+            <div id="bulk-status" style="margin-bottom:10px;color:#666;font-size:0.9em;"></div>
+            <button class="action-btn" id="save-all-btn" onclick="saveAll()" style="font-size:16px;padding:14px 28px;">Save All</button>
+            <button class="action-btn" onclick="resetAll()" style="background:#888;margin-left:8px;">Clear</button>
+            <a href="/commonplace/library" class="action-btn" style="background:#888;margin-left:8px;">Library</a>
           </div>
         </div>
 
@@ -1122,48 +1094,76 @@ export default async function handler(req, res) {
             document.getElementById('session-form').style.display = 'block';
             document.getElementById('session-active').style.display = 'none';
             document.getElementById('scan-section').style.display = 'none';
-            resetScan();
+            document.getElementById('cards-container').innerHTML = '';
+            document.getElementById('bulk-actions').style.display = 'none';
           }
 
-          function handlePhoto(input) {
-            if (!input.files || !input.files[0]) return;
-            const file = input.files[0];
-            const reader = new FileReader();
-            reader.onload = function(e) {
-              const img = new Image();
-              img.onload = function() {
-                const maxSize = 1600;
-                let w = img.width, h = img.height;
-                if (w > maxSize || h > maxSize) {
-                  if (w > h) { h = Math.round(h * maxSize / w); w = maxSize; }
-                  else { w = Math.round(w * maxSize / h); h = maxSize; }
-                }
-                const canvas = document.createElement('canvas');
-                canvas.width = w; canvas.height = h;
-                canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-                const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-                document.getElementById('preview-img').src = dataUrl;
-                document.getElementById('preview-container').style.display = 'block';
-                runOcr(dataUrl);
+          let cardCounter = 0;
+
+          function compressImage(file) {
+            return new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                  const maxSize = 1600;
+                  let w = img.width, h = img.height;
+                  if (w > maxSize || h > maxSize) {
+                    if (w > h) { h = Math.round(h * maxSize / w); w = maxSize; }
+                    else { w = Math.round(w * maxSize / h); h = maxSize; }
+                  }
+                  const canvas = document.createElement('canvas');
+                  canvas.width = w; canvas.height = h;
+                  canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                  resolve(canvas.toDataURL('image/jpeg', 0.85));
+                };
+                img.src = e.target.result;
               };
-              img.src = e.target.result;
-            };
-            reader.readAsDataURL(file);
+              reader.readAsDataURL(file);
+            });
           }
 
-          async function runOcr(dataUrl) {
-            const resultSection = document.getElementById('result-section');
-            const statusEl = document.getElementById('ocr-status');
-            const textArea = document.getElementById('extracted-text');
-            resultSection.style.display = 'block';
-            statusEl.textContent = 'Extracting text...';
-            textArea.value = '';
-            document.getElementById('save-btn').disabled = true;
+          async function handlePhotos(input) {
+            if (!input.files || input.files.length === 0) return;
+            const files = Array.from(input.files);
+            input.value = '';
+            document.getElementById('bulk-actions').style.display = 'block';
+            for (const file of files) {
+              const dataUrl = await compressImage(file);
+              addCard(dataUrl);
+            }
+          }
 
+          function addCard(dataUrl) {
+            const id = 'card-' + (++cardCounter);
+            const container = document.getElementById('cards-container');
+            const card = document.createElement('div');
+            card.id = id;
+            card.style.cssText = 'background:white;padding:15px;box-shadow:0 1px 3px rgba(0,0,0,0.1);margin-bottom:15px;';
+            card.innerHTML =
+              '<div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap;">' +
+                '<img src="' + dataUrl + '" style="width:80px;height:80px;object-fit:cover;border:1px solid #ddd;border-radius:4px;">' +
+                '<div style="flex:1;min-width:200px;">' +
+                  '<div class="card-status" style="font-size:0.85em;color:#666;margin-bottom:6px;">Extracting text...</div>' +
+                  '<textarea class="card-text" disabled placeholder="OCR running..." style="width:100%;min-height:120px;padding:8px;font-size:14px;font-family:Georgia,serif;line-height:1.6;border:1px solid #ddd;border-radius:4px;box-sizing:border-box;resize:vertical;"></textarea>' +
+                  '<div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' +
+                    '<input class="card-page" type="number" placeholder="Page #" style="width:90px;padding:6px;font-size:14px;border:1px solid #ddd;border-radius:4px;">' +
+                    '<button class="action-btn" onclick="removeCard(\\'' + id + '\\')" style="background:#cc0000;font-size:13px;padding:6px 12px;">Remove</button>' +
+                    '<span class="card-saved" style="display:none;color:#27ae60;font-weight:bold;">✓ Saved</span>' +
+                  '</div>' +
+                '</div>' +
+              '</div>';
+            container.appendChild(card);
+            card.dataset.image = dataUrl;
+            runCardOcr(card, dataUrl);
+          }
+
+          async function runCardOcr(card, dataUrl) {
+            const statusEl = card.querySelector('.card-status');
+            const textArea = card.querySelector('.card-text');
             const parts = dataUrl.split(',');
             const mediaType = parts[0].match(/:(.*?);/)[1];
             const base64 = parts[1];
-
             try {
               const resp = await fetch('/commonplace/ocr', {
                 method: 'POST',
@@ -1171,89 +1171,80 @@ export default async function handler(req, res) {
                 body: JSON.stringify({ code: localStorage.getItem('cp_code'), image: base64, mediaType })
               });
               const data = await resp.json();
-              if (!resp.ok) { statusEl.textContent = 'Error: ' + (data.error || 'Failed'); return; }
+              if (!resp.ok) {
+                statusEl.textContent = 'OCR error: ' + (data.error || 'Failed');
+                statusEl.style.color = '#cc0000';
+                return;
+              }
               textArea.value = data.text;
-              statusEl.textContent = 'Done — review and correct if needed.';
-              document.getElementById('save-btn').disabled = false;
+              textArea.disabled = false;
+              statusEl.textContent = 'Done — edit if needed.';
+              statusEl.style.color = '#27ae60';
             } catch(e) {
-              statusEl.textContent = 'Connection error.';
+              statusEl.textContent = 'Error: ' + e.message;
+              statusEl.style.color = '#cc0000';
             }
           }
 
-          function goToReview() {
-            const text = document.getElementById('extracted-text').value.trim();
-            const page = document.getElementById('page-number').value.trim();
-            const title = localStorage.getItem('cp_title');
-            const author = localStorage.getItem('cp_author');
-            if (!text) { alert('Text is empty.'); return; }
-            document.getElementById('review-text').textContent = text;
-            const meta = title + ' — ' + author + (page ? ' · p. ' + page : '');
-            document.getElementById('review-meta').textContent = meta;
-            document.getElementById('result-section').style.display = 'none';
-            document.getElementById('review-section').style.display = 'block';
-            document.getElementById('save-btn').disabled = false;
-            document.getElementById('save-status').style.display = 'none';
-            document.getElementById('post-save-actions').style.display = 'none';
-            window.scrollTo({ top: 0, behavior: 'smooth' });
+          function removeCard(id) {
+            const el = document.getElementById(id);
+            if (el) el.remove();
+            if (document.getElementById('cards-container').children.length === 0) {
+              document.getElementById('bulk-actions').style.display = 'none';
+            }
           }
 
-          function backToEdit() {
-            document.getElementById('review-section').style.display = 'none';
-            document.getElementById('result-section').style.display = 'block';
-          }
-
-          async function savePassage() {
-            const text = document.getElementById('extracted-text').value.trim();
-            const page = document.getElementById('page-number').value.trim();
+          async function saveAll() {
+            const cards = Array.from(document.querySelectorAll('#cards-container > div'));
             const title = localStorage.getItem('cp_title');
             const author = localStorage.getItem('cp_author');
             const c = localStorage.getItem('cp_code');
-            if (!text) { alert('Text is empty.'); return; }
-            if (!title || !author) { alert('Book session lost.'); return; }
-            if (!c) { alert('Verification code missing.'); return; }
+            if (!title || !author || !c) { alert('Session info missing.'); return; }
 
-            const statusEl = document.getElementById('save-status');
-            statusEl.style.display = 'block';
-            statusEl.style.background = '#d4edff';
-            statusEl.textContent = 'Saving...';
-            document.getElementById('save-btn').disabled = true;
+            const statusEl = document.getElementById('bulk-status');
+            const saveBtn = document.getElementById('save-all-btn');
+            saveBtn.disabled = true;
+            let saved = 0, failed = 0, total = cards.length;
 
-            const payload = { code: c, text, title, author, source: 'commonplace' };
-            if (page) payload.page = page;
-
-            try {
-              const resp = await fetch('/create', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-              });
-              const data = await resp.json();
-              if (resp.ok && data.success) {
-                statusEl.style.background = '#d4edda';
-                statusEl.textContent = '✓ Saved to your commonplace book.';
-                document.getElementById('post-save-actions').style.display = 'block';
-              } else {
-                statusEl.style.background = '#f8d7da';
-                statusEl.textContent = 'Error: ' + (data.error || 'Failed') + (data.details ? ' — ' + data.details : '');
-                document.getElementById('save-btn').disabled = false;
+            for (const card of cards) {
+              if (card.querySelector('.card-saved').style.display !== 'none') continue;
+              const text = card.querySelector('.card-text').value.trim();
+              const page = card.querySelector('.card-page').value.trim();
+              if (!text) { failed++; continue; }
+              statusEl.textContent = 'Saving ' + (saved + failed + 1) + ' of ' + total + '...';
+              const payload = { code: c, text, title, author, source: 'commonplace' };
+              if (page) payload.page = page;
+              try {
+                const resp = await fetch('/create', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+                if (resp.ok && data.success) {
+                  saved++;
+                  card.querySelector('.card-saved').style.display = 'inline';
+                  card.style.opacity = '0.6';
+                } else {
+                  failed++;
+                  card.querySelector('.card-status').textContent = 'Save failed: ' + (data.error || 'unknown');
+                  card.querySelector('.card-status').style.color = '#cc0000';
+                }
+              } catch(e) {
+                failed++;
+                card.querySelector('.card-status').textContent = 'Save error: ' + e.message;
+                card.querySelector('.card-status').style.color = '#cc0000';
               }
-            } catch(e) {
-              statusEl.style.background = '#f8d7da';
-              statusEl.textContent = 'Error: ' + e.message;
-              document.getElementById('save-btn').disabled = false;
             }
+            statusEl.textContent = 'Saved ' + saved + (failed > 0 ? ', ' + failed + ' failed' : '') + '.';
+            saveBtn.disabled = false;
           }
 
-          function resetScan() {
+          function resetAll() {
+            if (!confirm('Clear all unsaved cards?')) return;
+            document.getElementById('cards-container').innerHTML = '';
+            document.getElementById('bulk-actions').style.display = 'none';
             document.getElementById('photo-input').value = '';
-            document.getElementById('preview-container').style.display = 'none';
-            document.getElementById('result-section').style.display = 'none';
-            document.getElementById('review-section').style.display = 'none';
-            document.getElementById('extracted-text').value = '';
-            document.getElementById('page-number').value = '';
-            document.getElementById('save-status').style.display = 'none';
-            document.getElementById('post-save-actions').style.display = 'none';
-            window.scrollTo({ top: 0, behavior: 'smooth' });
           }
 
           // Restore session if already active
